@@ -63,7 +63,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 | 5 | Where finished recordings go | Straight into On the Record's folder, picked once in On Air's settings. |
 | 6 | Picture | Up to 1080p at 15 frames a second, in H.264: name tiles stay readable, any browser plays it, and an hour is under 1 GB. |
 | 7 | The pieces on disk after hand-over | Kept 3 days as a safety net, then deleted. |
-| 8 | Where the project's progress shows | A view only its owner can see, while the repository is private. |
+| 8 | Where the project's progress shows | On Invariant's public dashboard, beside its other projects, with the repository public. |
 | 9 | Which decision model | Built for both from the start: a hosted model and a local one behind one interface. Decision 10 says which one runs. |
 | 10 | What may leave the Mac | A local model only, until the archive's owners agree that a call's words may go to a hosted one. |
 | 11 | Where context shows | A slim panel at the side of the screen. The menu-bar dot shows a count when the panel is closed. |
