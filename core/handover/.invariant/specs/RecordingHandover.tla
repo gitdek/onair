@@ -127,7 +127,7 @@ Init ==
     /\ attempt = 0 /\ round = 0 /\ differences = 0
     /\ cleanup = "dormant" /\ cleanupReason = "none" /\ cleanupTry = 0
     /\ intent = NoRequest /\ wire = NoRequest /\ caller = "idle" /\ reply = "none"
-    /\ hidden = "absent" /\ named \in {"absent", "same", "different"}
+    /\ hidden = "absent" /\ named = "absent"
     /\ foreignContent = named /\ initialNamed = named
     /\ hiddenVerified = FALSE /\ namedVerified = FALSE /\ publicationVerified = FALSE
     /\ publications = 0 /\ copies = 0 /\ activeCopies = 0
@@ -190,10 +190,11 @@ BeginCopy ==
                    spool, keepElapsed, running, replayed>>
     /\ execution' = wire
 
-FinishCopy ==
+FinishCopy(result, content) ==
     /\ caller = "busy"
-    /\ \E r \in {"ok", "folderGone", "folderFull"} :
-        /\ reply' = r /\ hidden' \in IF r = "ok" THEN {"same", "different"} ELSE {"partial"}
+    /\ result \in {"ok", "folderGone", "folderFull"}
+    /\ content \in IF result = "ok" THEN {"same", "different"} ELSE {"partial"}
+    /\ reply' = result /\ hidden' = content
     /\ caller' = "done" /\ activeCopies' = 0
     /\ UNCHANGED <<outcome, phase, reason, attempt, round, differences, cleanup, cleanupReason,
                    cleanupTry, intent, wire, named, foreignContent, initialNamed,
@@ -201,20 +202,20 @@ FinishCopy ==
                    spool, keepElapsed, running, replayed>>
     /\ UNCHANGED execution
 
-ExecuteOther ==
+ExecuteOther(r) ==
     /\ wire # NoRequest /\ wire.kind # "copy" /\ caller = "idle"
     /\ caller' = "done"
-    /\ \E r \in CASE wire.kind = "compareNamed" -> {named, "folderGone", "folderFull"}
+    /\ r \in CASE wire.kind = "compareNamed" -> {named, "folderGone", "folderFull"}
                      [] wire.kind = "compareHidden" -> {hidden, "folderGone", "folderFull"}
                      [] wire.kind = "publish" -> {IF named = "absent" THEN "ok" ELSE "taken", "folderGone", "folderFull"}
                      [] wire.kind = "removeHidden" -> {"ok", "folderGone", "folderFull"}
-                     [] wire.kind = "removeSpool" -> {"ok", "removeFailed"} :
-        /\ reply' = r
-        /\ hidden' = IF r = "ok" /\ wire.kind \in {"publish", "removeHidden"} THEN "absent" ELSE hidden
-        /\ named' = IF r = "ok" /\ wire.kind = "publish" THEN hidden ELSE named
-        /\ publications' = IF r = "ok" /\ wire.kind = "publish" THEN publications + 1 ELSE publications
-        /\ publicationVerified' = IF r = "ok" /\ wire.kind = "publish" THEN hiddenVerified ELSE publicationVerified
-        /\ spool' = IF r = "ok" /\ wire.kind = "removeSpool" THEN FALSE ELSE spool
+                     [] wire.kind = "removeSpool" -> {"ok", "removeFailed"}
+    /\ reply' = r
+    /\ hidden' = IF r = "ok" /\ wire.kind \in {"publish", "removeHidden"} THEN "absent" ELSE hidden
+    /\ named' = IF r = "ok" /\ wire.kind = "publish" THEN hidden ELSE named
+    /\ publications' = IF r = "ok" /\ wire.kind = "publish" THEN publications + 1 ELSE publications
+    /\ publicationVerified' = IF r = "ok" /\ wire.kind = "publish" THEN hiddenVerified ELSE publicationVerified
+    /\ spool' = IF r = "ok" /\ wire.kind = "removeSpool" THEN FALSE ELSE spool
     /\ UNCHANGED <<outcome, phase, reason, attempt, round, differences, cleanup, cleanupReason,
                    cleanupTry, intent, wire, foreignContent, initialNamed, hiddenVerified,
                    namedVerified, copies, activeCopies, keepElapsed, running, replayed>>
@@ -272,9 +273,10 @@ RetryCleanup ==
 
 \* The environment may take the final name even between its comparison and
 \* publication. Publication is non-replacing and reports that collision.
-NameAppears ==
+NameAppears(content) ==
     /\ outcome = "active" /\ named = "absent"
-    /\ named' \in {"same", "different"} /\ foreignContent' = named'
+    /\ content \in {"same", "different"}
+    /\ named' = content /\ foreignContent' = content
     /\ UNCHANGED <<outcome, phase, reason, attempt, round, differences, cleanup, cleanupReason,
                    cleanupTry, intent, wire, caller, reply, hidden, initialNamed, hiddenVerified,
                    namedVerified, publicationVerified, publications, copies, activeCopies,
@@ -314,8 +316,23 @@ ResendProgress == SF_vars(Resend)
 ConsumeProgress == SF_vars(Consume)
 RetentionProgress == SF_vars(BeginRetention)
 
-Next == Start \/ RetryDelivery \/ Drive \/ BeginCopy \/ FinishCopy \/ ExecuteOther
-        \/ RetryCleanup \/ NameAppears \/ RetentionElapsed \/ Crash \/ Resume \/ Wait
+\* Single-root exploration: choose a pre-existing file before starting.
+InitialFile(content) ==
+    /\ outcome = "notStarted" /\ named = "absent"
+    /\ content \in {"same", "different"}
+    /\ named' = content /\ foreignContent' = content /\ initialNamed' = content
+    /\ UNCHANGED <<outcome, phase, reason, attempt, round, differences,
+                   cleanup, cleanupReason, cleanupTry, intent, wire, caller, reply,
+                   execution, hidden, hiddenVerified, namedVerified, publicationVerified,
+                   publications, copies, activeCopies, spool, keepElapsed, running, replayed>>
+
+Next == Start \/ RetryDelivery \/ Issue \/ Resend \/ Consume \/ BeginRetention \/ BeginCopy
+        \/ (\E result \in {"ok", "folderGone", "folderFull"}, content \in {"same", "different", "partial"} : FinishCopy(result, content))
+        \/ (\E r \in Replies : ExecuteOther(r))
+        \/ RetryCleanup
+        \/ (\E content \in {"same", "different"} : NameAppears(content))
+        \/ (\E content \in {"same", "different"} : InitialFile(content))
+        \/ RetentionElapsed \/ Crash \/ Resume \/ Wait
 
 \* Mutation tests emit the unsafe request, before any file effect is needed.
 PublishUnchecked ==
