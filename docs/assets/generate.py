@@ -62,14 +62,14 @@ def how(t):
     ink, quiet, line = t["ink"], t["quiet"], t["line"]
     pieces = []
     for i in range(11):
-        x = 300 + i * 62
+        x = 250 + i * 62
         pieces.append(f'<rect class="piece" x="{x}" y="64" width="52" height="40" rx="8" fill="{t["safe_fill"]}" '
                       f'stroke="{t["safe"]}" stroke-width="1.5" style="animation-delay:{i * 0.35:.2f}s"/>')
-    open_x = 300 + 11 * 62
+    open_x = 250 + 11 * 62
     def box(x, w, title, sub):
         return (f'<rect x="{x}" y="232" width="{w}" height="76" rx="10" fill="{t["panel"]}" stroke="{line}" stroke-width="1.5"/>'
-                f'<text x="{x + w / 2}" y="263" text-anchor="middle" font-size="19" font-weight="600" fill="{ink}">{title}</text>'
-                f'<text x="{x + w / 2}" y="290" text-anchor="middle" font-size="15.5" fill="{quiet}">{sub}</text>')
+                f'<text x="{x + w / 2}" y="264" text-anchor="middle" font-size="21" font-weight="600" fill="{ink}">{title}</text>'
+                f'<text x="{x + w / 2}" y="291" text-anchor="middle" font-size="17" fill="{quiet}">{sub}</text>')
     def arrow(x1, x2):
         return f'<path d="M{x1} 270H{x2}" stroke="{quiet}" stroke-width="1.5" marker-end="url(#tip)"/>'
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 348" role="img" aria-label="While recording, picture and sound go to disk in short pieces that each play on their own, so a crash costs only the open piece. At Stop the last piece is closed, the pieces are joined, and the finished file is handed over whole.">
@@ -84,25 +84,25 @@ def how(t):
     <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="{quiet}"/></marker>
   </defs>
   <g font-family="{FONT}">
-    <text x="40" y="78" font-size="19" font-weight="600" fill="{ink}">While recording</text>
-    <text x="40" y="102" font-size="15.5" fill="{quiet}">pieces, a few seconds each</text>
+    <text x="40" y="80" font-size="21" font-weight="600" fill="{ink}">While recording</text>
+    <text x="40" y="105" font-size="17" fill="{quiet}">a few seconds each</text>
     {"".join(pieces)}
     <rect class="open" x="{open_x}" y="64" width="52" height="40" rx="8" fill="{t["live_fill"]}" stroke="{t["live"]}" stroke-width="1.5" stroke-dasharray="6 4"/>
-    <path d="M300 122H972" stroke="{t["safe"]}" stroke-width="1.5"/>
-    <path d="M300 116V128M972 116V128" stroke="{t["safe"]}" stroke-width="1.5"/>
-    <text x="636" y="148" text-anchor="middle" font-size="15.5" fill="{t["safe"]}">closed: safe on disk, and each one plays on its own</text>
-    <text x="{open_x + 26}" y="148" text-anchor="middle" font-size="15.5" fill="{t["live"]}">open</text>
-    <text x="{open_x + 26}" y="169" text-anchor="middle" font-size="15.5" fill="{t["live"]}">all a crash costs</text>
+    <path d="M250 122H922" stroke="{t["safe"]}" stroke-width="1.5"/>
+    <path d="M250 116V128M922 116V128" stroke="{t["safe"]}" stroke-width="1.5"/>
+    <text x="586" y="150" text-anchor="middle" font-size="17" fill="{t["safe"]}">closed: safe on disk, and each one plays on its own</text>
+    <text x="{open_x + 26}" y="150" text-anchor="middle" font-size="17" fill="{t["live"]}">open:</text>
+    <text x="{open_x + 26}" y="173" text-anchor="middle" font-size="17" fill="{t["live"]}">all a crash costs</text>
     <path d="M40 200H1160" stroke="{line}" stroke-width="1" stroke-dasharray="2 6"/>
-    <text x="40" y="263" font-size="19" font-weight="600" fill="{ink}">At Stop</text>
-    <text x="40" y="287" font-size="15.5" fill="{quiet}">about a second</text>
-    {box(300, 230, "Close the last piece", "nothing else to save")}
-    {arrow(530, 566)}
-    {box(568, 170, "Join the pieces", "into one file")}
-    {arrow(738, 774)}
-    {box(776, 210, "Hand it over", "hidden until it is whole")}
-    {arrow(986, 1022)}
-    {box(1024, 150, "The archive", "on its shelf")}
+    <text x="40" y="264" font-size="21" font-weight="600" fill="{ink}">At Stop</text>
+    <text x="40" y="291" font-size="17" fill="{quiet}">about a second</text>
+    {box(250, 250, "Close the last piece", "nothing else to save")}
+    {arrow(500, 532)}
+    {box(534, 190, "Join the pieces", "into one file")}
+    {arrow(724, 756)}
+    {box(758, 230, "Hand it over", "hidden until it is whole")}
+    {arrow(988, 1020)}
+    {box(1022, 150, "The archive", "on its shelf")}
   </g>
 </svg>
 '''
