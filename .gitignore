@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Build output
+/bin/
+/out/
+*.test
+
+# Local settings and recordings never belong here
+.env
+*.mov
+*.mp4
