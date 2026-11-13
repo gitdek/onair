@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "name": "go:.",
+      "directory": ".",
+      "language": "go",
+      "image": "golang@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414",
+      "lockfiles": [],
+      "inputs": [
+        "go.mod"
+      ],
+      "commands": {
+        "build": {
+          "argv": [
+            "go",
+            "build",
+            "./..."
+          ]
+        },
+        "format": {
+          "argv": [
+            "./tools/check-format"
+          ]
+        },
+        "install": {
+          "argv": [
+            "go",
+            "mod",
+            "download"
+          ]
+        },
+        "lint": {
+          "argv": [
+            "go",
+            "vet",
+            "./..."
+          ]
+        },
+        "test": {
+          "argv": [
+            "go",
+            "test",
+            "./..."
+          ]
+        },
+        "test_one": {
+          "argv": [
+            "go",
+            "test",
+            "./...",
+            "-run",
+            "{test}",
+            "-count=1"
+          ]
+        }
+      }
+    }
+  ],
+  "agent_rules": [
+    "AGENTS.md"
+  ],
+  "current_state": [
+    "SPEC.md",
+    "README.md",
+    "docs/PRD.md"
+  ],
+  "trusted_paths": [
+    "tools/"
+  ],
+  "shared_paths": [
+    {
+      "path": ".github/workflows/gate.yml",
+      "parts": [
+        "go:."
+      ]
+    }
+  ]
+}
