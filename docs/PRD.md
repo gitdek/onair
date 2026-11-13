@@ -2,11 +2,11 @@
 
 On Air is a menu-bar recorder for macOS that keeps a meeting's recording playable on disk from its first seconds, so nothing is left to fail when Stop is pressed. Each finished recording goes to On the Record by itself. Later milestones make it the live side of On the Record: while a meeting happens, it shows what the conversation connects to.
 
-This is the first cut. The decisions below are proposals until the owner settles them, and only milestone one is specified.
+This is the first cut. The decisions below are proposals until they are settled, and only milestone one is specified.
 
 ## Why
 
-A meeting recorded with macOS's own Screenshot app was lost when the recording failed at the end. That recorder writes a recording's index only when it stops, so a failure in the last step costs the whole recording. An earlier recording ran on across two meetings and the talk between them.
+macOS's own screen recorder writes a recording's index only when it stops, so a failure in that last step costs the whole recording, however long it ran. A recorder left running also captures whatever follows the meeting. On Air exists so that neither can happen.
 
 ## Decisions
 
@@ -89,7 +89,7 @@ Milestone three has two layers, one fast and one slow, and reuses what On the Re
 4. **Show.** A small panel lists the two or three strongest, and a click opens the moment on the tape.
 5. **Ask, slow.** For a real question, an agent with the meetings connector writes a cited brief. It runs when asked, never on every sentence.
 
-What may leave the Mac during a call is the owners' decision before this milestone is built. Analysis of faces is a later idea: on the Mac only, off by default, and labelled as play.
+What may leave the Mac during a call is decided before this milestone is built.
 
 ## Not in milestone one
 

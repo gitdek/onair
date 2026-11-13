@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 348" role="img" aria-label="While recording, picture and sound go to disk in short pieces that each play on their own, so a crash costs only the open piece. At Stop the last piece is closed, the pieces are joined, and the finished file is handed over whole.">
+  <style>
+    .piece { animation: land 6s ease-in-out infinite; }
+    .open { animation: write 1.2s ease-in-out infinite; }
+    @keyframes land { 0%, 9%, 100% { opacity: 1; } 4% { opacity: .35; } }
+    @keyframes write { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .piece, .open { animation: none; } }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#59636e"/></marker>
+  </defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="40" y="78" font-size="19" font-weight="600" fill="#1f2328">While recording</text>
+    <text x="40" y="102" font-size="15.5" fill="#59636e">pieces, a few seconds each</text>
+    <rect class="piece" x="300" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:0.00s"/><rect class="piece" x="362" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:0.35s"/><rect class="piece" x="424" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:0.70s"/><rect class="piece" x="486" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:1.05s"/><rect class="piece" x="548" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:1.40s"/><rect class="piece" x="610" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:1.75s"/><rect class="piece" x="672" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:2.10s"/><rect class="piece" x="734" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:2.45s"/><rect class="piece" x="796" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:2.80s"/><rect class="piece" x="858" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:3.15s"/><rect class="piece" x="920" y="64" width="52" height="40" rx="8" fill="#dafbe1" stroke="#1a7f37" stroke-width="1.5" style="animation-delay:3.50s"/>
+    <rect class="open" x="982" y="64" width="52" height="40" rx="8" fill="#ffebe9" stroke="#cf222e" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <path d="M300 122H972" stroke="#1a7f37" stroke-width="1.5"/>
+    <path d="M300 116V128M972 116V128" stroke="#1a7f37" stroke-width="1.5"/>
+    <text x="636" y="148" text-anchor="middle" font-size="15.5" fill="#1a7f37">closed: safe on disk, and each one plays on its own</text>
+    <text x="1008" y="148" text-anchor="middle" font-size="15.5" fill="#cf222e">open</text>
+    <text x="1008" y="169" text-anchor="middle" font-size="15.5" fill="#cf222e">all a crash costs</text>
+    <path d="M40 200H1160" stroke="#d0d7de" stroke-width="1" stroke-dasharray="2 6"/>
+    <text x="40" y="263" font-size="19" font-weight="600" fill="#1f2328">At Stop</text>
+    <text x="40" y="287" font-size="15.5" fill="#59636e">about a second</text>
+    <rect x="300" y="232" width="230" height="76" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/><text x="415.0" y="263" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2328">Close the last piece</text><text x="415.0" y="290" text-anchor="middle" font-size="15.5" fill="#59636e">nothing else to save</text>
+    <path d="M530 270H566" stroke="#59636e" stroke-width="1.5" marker-end="url(#tip)"/>
+    <rect x="568" y="232" width="170" height="76" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/><text x="653.0" y="263" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2328">Join the pieces</text><text x="653.0" y="290" text-anchor="middle" font-size="15.5" fill="#59636e">into one file</text>
+    <path d="M738 270H774" stroke="#59636e" stroke-width="1.5" marker-end="url(#tip)"/>
+    <rect x="776" y="232" width="210" height="76" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/><text x="881.0" y="263" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2328">Hand it over</text><text x="881.0" y="290" text-anchor="middle" font-size="15.5" fill="#59636e">hidden until it is whole</text>
+    <path d="M986 270H1022" stroke="#59636e" stroke-width="1.5" marker-end="url(#tip)"/>
+    <rect x="1024" y="232" width="150" height="76" rx="10" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1.5"/><text x="1099.0" y="263" text-anchor="middle" font-size="19" font-weight="600" fill="#1f2328">The archive</text><text x="1099.0" y="290" text-anchor="middle" font-size="15.5" fill="#59636e">on its shelf</text>
+  </g>
+</svg>

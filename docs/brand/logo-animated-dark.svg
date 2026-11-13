@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" role="img" aria-label="On Air: a studio sign, lit red while a recording is live">
+  <style>
+    .glow { animation: glow 2.6s ease-in-out infinite; }
+    .lamp { animation: lamp 2.6s ease-in-out infinite; }
+    .bar { transform-box: fill-box; transform-origin: center; animation: level 1.6s ease-in-out infinite; }
+    @keyframes glow { 0%, 100% { opacity: .55; } 50% { opacity: .95; } }
+    @keyframes lamp { 0%, 100% { opacity: .9; } 50% { opacity: 1; } }
+    @keyframes level { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+    @media (prefers-reduced-motion: reduce) { .glow, .lamp, .bar { animation: none; } }
+  </style>
+  <defs>
+    <filter id="halo" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="22"/></filter>
+    <filter id="soft" x="-10%" y="-30%" width="120%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
+  </defs>
+  <rect class="glow" x="250" y="52" width="460" height="150" rx="30" fill="#ff3b30" opacity=".7" filter="url(#halo)"/>
+  <rect x="240" y="44" width="480" height="166" rx="26" fill="#1f1f25" stroke="#3a3a44" stroke-width="3"/>
+  <rect x="256" y="60" width="448" height="134" rx="16" fill="none" stroke="#3a3a44" stroke-width="1.5"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="800" font-size="92" text-anchor="middle" letter-spacing="14">
+    <text class="glow" x="487" y="160" fill="#ff3b30" filter="url(#soft)">ON AIR</text>
+    <text class="lamp" x="487" y="160" fill="#ff3b30">ON AIR</text>
+  </g>
+  <rect class="bar" x="252.0" y="261.0" width="9" height="10" rx="4.5" fill="#656c76" style="animation-delay:-0.00s"/><rect class="bar" x="271.2" y="257.0" width="9" height="18" rx="4.5" fill="#656c76" style="animation-delay:-0.14s"/><rect class="bar" x="290.4" y="251.0" width="9" height="30" rx="4.5" fill="#656c76" style="animation-delay:-0.27s"/><rect class="bar" x="309.6" y="255.0" width="9" height="22" rx="4.5" fill="#656c76" style="animation-delay:-0.41s"/><rect class="bar" x="328.8" y="247.0" width="9" height="38" rx="4.5" fill="#656c76" style="animation-delay:-0.55s"/><rect class="bar" x="348.0" y="253.0" width="9" height="26" rx="4.5" fill="#656c76" style="animation-delay:-0.69s"/><rect class="bar" x="367.2" y="244.0" width="9" height="44" rx="4.5" fill="#656c76" style="animation-delay:-0.82s"/><rect class="bar" x="386.4" y="251.0" width="9" height="30" rx="4.5" fill="#656c76" style="animation-delay:-0.96s"/><rect class="bar" x="405.6" y="256.0" width="9" height="20" rx="4.5" fill="#656c76" style="animation-delay:-1.10s"/><rect class="bar" x="424.8" y="249.0" width="9" height="34" rx="4.5" fill="#656c76" style="animation-delay:-1.23s"/><rect class="bar" x="444.0" y="242.0" width="9" height="48" rx="4.5" fill="#656c76" style="animation-delay:-1.37s"/><rect class="bar" x="463.2" y="252.0" width="9" height="28" rx="4.5" fill="#656c76" style="animation-delay:-1.51s"/><rect class="bar" x="482.4" y="258.0" width="9" height="16" rx="4.5" fill="#656c76" style="animation-delay:-0.04s"/><rect class="bar" x="501.6" y="248.0" width="9" height="36" rx="4.5" fill="#656c76" style="animation-delay:-0.18s"/><rect class="bar" x="520.8" y="254.0" width="9" height="24" rx="4.5" fill="#656c76" style="animation-delay:-0.32s"/><rect class="bar" x="540.0" y="245.0" width="9" height="42" rx="4.5" fill="#656c76" style="animation-delay:-0.46s"/><rect class="bar" x="559.2" y="251.0" width="9" height="30" rx="4.5" fill="#656c76" style="animation-delay:-0.59s"/><rect class="bar" x="578.4" y="257.0" width="9" height="18" rx="4.5" fill="#656c76" style="animation-delay:-0.73s"/><rect class="bar" x="597.6" y="253.0" width="9" height="26" rx="4.5" fill="#656c76" style="animation-delay:-0.87s"/><rect class="bar" x="616.8" y="247.0" width="9" height="38" rx="4.5" fill="#656c76" style="animation-delay:-1.00s"/><rect class="bar" x="636.0" y="255.0" width="9" height="22" rx="4.5" fill="#656c76" style="animation-delay:-1.14s"/><rect class="bar" x="655.2" y="260.0" width="9" height="12" rx="4.5" fill="#656c76" style="animation-delay:-1.28s"/><rect class="bar" x="674.4" y="252.0" width="9" height="28" rx="4.5" fill="#656c76" style="animation-delay:-1.41s"/><rect class="bar" x="693.6" y="258.0" width="9" height="16" rx="4.5" fill="#656c76" style="animation-delay:-1.55s"/>
+</svg>
