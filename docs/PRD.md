@@ -2,7 +2,7 @@
 
 On Air sits in the menu bar during a meeting and does two things. It gets the meeting on tape in a way that can't be lost, and hands the tape to On the Record, a meeting archive. And while the meeting happens, it follows the conversation, decides fast what matters, and shows what On the Record already holds about it.
 
-This is the first cut. The decisions below are proposals until they are settled, and only milestone one is specified in full.
+The decisions below were settled on 13 November 2026. Only milestone one is specified in full.
 
 ## The whole idea
 
@@ -54,7 +54,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 
 ## Decisions
 
-| # | Decision | Proposed |
+| # | Decision | Decided |
 | :-- | :-- | :-- |
 | 1 | What it records | The whole main display. Picking one window comes later. |
 | 2 | Sound | The call's sound and the microphone, mixed into one track, which is what On the Record's transcription and speaker naming read today. |
