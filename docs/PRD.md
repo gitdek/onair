@@ -1,8 +1,52 @@
 # On Air: what it is meant to be
 
-On Air is a menu-bar recorder for macOS that keeps a meeting's recording playable on disk from its first seconds, so nothing is left to fail when Stop is pressed. Each finished recording goes to On the Record by itself. Later milestones make it the live side of On the Record: while a meeting happens, it shows what the conversation connects to.
+On Air sits in the menu bar during a meeting and does two things. It gets the meeting on tape in a way that can't be lost, and hands the tape to On the Record, a meeting archive. And while the meeting happens, it follows the conversation, decides fast what matters, and shows what On the Record already holds about it.
 
-This is the first cut. The decisions below are proposals until they are settled, and only milestone one is specified.
+This is the first cut. The decisions below are proposals until they are settled, and only milestone one is specified in full.
+
+## The whole idea
+
+On Air has three jobs, and each one feeds the next.
+
+1. **Record.** Picture and sound go to disk in short pieces, so the meeting is safe from its first seconds. This is milestone one, and it comes first because everything else stands on it.
+2. **Follow.** On Air keeps the last minute of the call as text: the words, from on-device speech-to-text, and what is on screen, read off the frames on the Mac.
+3. **Decide and connect.** Every few seconds a decision model answers typed questions about that minute. When an answer says something matters, On Air asks On the Record what it connects to, and shows the two or three strongest links beside the call.
+
+### The live loop
+
+The fast layer is a decision model in the style of jev: it is given state and typed questions, and answers with one of the options it was given, with probabilities, in well under a second. It never writes prose, and nothing waits on a long answer. A hosted model and a local one sit behind the same interface.
+
+| Question about the last minute | Kind | What a yes or a high score does |
+| :-- | :-- | :-- |
+| Is a decision being made? | Yes or no | Marks the moment, and shows what was decided about the same thing before |
+| Is someone taking on a task? | Yes or no | Marks it as a likely action item, and shows that person's open items |
+| Which open item is this about? | One of the open items, or none | Shows that item's card: where it stands and what it waits on |
+| Is a question being asked that the record can answer? | Yes or no | Asks On the Record, and shows the best passage with its link |
+| How well does this passage fit what is being said? | A score | Drops weak matches, so the panel stays quiet |
+| Has the topic changed? | Yes or no | Clears the panel and starts a fresh minute |
+| Has the meeting ended? | Yes or no | Asks whether to stop recording |
+
+The slow layer is an agent connected to On the Record. It writes a cited brief when asked a real question, which takes seconds to minutes, so it runs on request and never on every sentence.
+
+Three rules come with the live side:
+
+- Nothing the live side does can cost the recording. If the decision model, On the Record or the panel fails, recording carries on untouched.
+- During a meeting On Air only reads from On the Record.
+- Nothing leaves the Mac that its setting doesn't allow. With a local model, nothing leaves at all.
+
+### Working with On the Record
+
+On Air reads from On the Record during a meeting, and hands it files afterwards. It needs no models of its own for the matching, because On the Record's own search does that.
+
+| When | What On Air does | How |
+| :-- | :-- | :-- |
+| At the start of a call | Reads the open items with the people on it | `list_action_items`, through On the Record's read-only door on the Mac |
+| During the meeting | Asks what the last minute connects to: earlier moments, notebook entries and action items | `find_connections`, through the same door. Nothing leaves the Mac |
+| When asked | Gets a cited brief on a topic | `gather_context`, by way of an agent |
+| After the meeting | Hands over the recording | A file in the folder On the Record watches |
+| After the meeting, from milestone two | Hands over a first transcript | A file beside the recording, in a shape On the Record already reads |
+
+On Air never changes On the Record's board or notebook by itself. An action item it spots waits for a person to accept it.
 
 ## Why
 
@@ -19,6 +63,10 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 | 5 | Where finished recordings go | Straight into On the Record's folder, picked once in On Air's settings. |
 | 6 | Picture | Up to 1080p at 15 frames a second, in H.264: name tiles stay readable, any browser plays it, and an hour is under 1 GB. |
 | 7 | The pieces on disk after hand-over | Kept 3 days as a safety net, then deleted. |
+| 9 | Which decision model | Built for both from the start: a hosted model and a local one behind one interface. Decision 10 says which one runs. |
+| 10 | What may leave the Mac | A local model only, until the archive's owners agree that a call's words may go to a hosted one. |
+| 11 | Where context shows | A slim panel at the side of the screen. The menu-bar dot shows a count when the panel is closed. |
+| 12 | How often it looks | Every 10 seconds, and at once when the screen changes. |
 
 ## Milestone one: never lose a recording
 
@@ -79,17 +127,7 @@ Milestone one is done when these checks pass on the owner's Mac.
 | 2. Stops when the meeting does | On Air stops by itself when the call ends, names the recording from the calendar, makes the lighter copy On the Record's Lab asks for, trims to the meeting, and leaves a transcript beside the video, so the meeting is searchable in On the Record minutes after it ends | A week of meetings is recorded without anyone touching Stop or the files |
 | 3. Live context | While a meeting happens, a panel shows what its last minute connects to in On the Record: earlier moments, notebook entries and open items, each with a link. A decision model picks what is worth showing | The panel brings up the right earlier moment while the call is still on its topic, and a question gets a cited answer |
 
-### Live context, in outline
-
-Milestone three has two layers, one fast and one slow, and reuses what On the Record already runs.
-
-1. **Hear and read.** The app keeps the last minute or so of the call as words, from macOS's on-device speech-to-text, and as screen text, from the Vision call On the Record uses for name tiles.
-2. **Decide, fast.** Every few seconds a decision model gets that minute as state and answers typed questions: is a decision being made, is someone taking on a task, which open item is this about, is this passage worth showing. A hosted model or a local one sits behind the same interface.
-3. **Fetch.** When something is worth it, the app asks On the Record's read-only door on the Mac what that minute connects to. `find_connections` answers with meeting moments, notebook entries and action items, each with a link.
-4. **Show.** A small panel lists the two or three strongest, and a click opens the moment on the tape.
-5. **Ask, slow.** For a real question, an agent with the meetings connector writes a cited brief. It runs when asked, never on every sentence.
-
-What may leave the Mac during a call is decided before this milestone is built.
+The live loop and the interface with On the Record are described under [The whole idea](#the-whole-idea). Decisions 9 to 12 belong to milestone three and can wait until then.
 
 ## Not in milestone one
 
