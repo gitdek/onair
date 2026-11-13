@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "fingerprint": "sha256:e565517239a9a1f187562cdd7771b3693b0fd52f3d5b6331fa1de2654a9d8e87",
+  "limitation": {
+    "code": "too_large",
+    "actual": 7296,
+    "limit": 500,
+    "source": {
+      "module": "RecordingHandover",
+      "config": {
+        "Specification": "Spec",
+        "Constants": {
+          "MaxAttempts": "2",
+          "MaxCleanupAttempts": "2",
+          "MaxDifferences": "2",
+          "OtherRecording": "\"unrelated.wav\"",
+          "Recording": "\"recording.wav\""
+        },
+        "Invariants": [
+          "PublicationIsVerified",
+          "SpoolRemovalIsSafe",
+          "NoCopyAfterPublication",
+          "OneCopyAtATime",
+          "ReplayKeepsIdentity",
+          "OnlyOwnedNames",
+          "CopiesAreHidden",
+          "NewCopiesStartCleanly",
+          "DifferenceLimitStopsCopying",
+          "AtMostOnePublication",
+          "ForeignFileIsPreserved",
+          "SuccessHasEvidence",
+          "FailureKeepsSpool",
+          "DifferentCopyIsNotPublished",
+          "DifferenceLimitCleansUp",
+          "ExistingMatchAvoidsCopy",
+          "CleanupCannotUndoDelivery",
+          "TypeOK"
+        ],
+        "Properties": null
+      },
+      "tool": {
+        "Image": "eclipse-temurin@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29c525d58bf5e02e91b0f",
+        "JarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+      },
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    }
+  }
+}

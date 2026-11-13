@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "state": [
+    {
+      "id": "interrupted",
+      "when": {
+        "eq": [
+          {
+            "var": "running"
+          },
+          "FALSE"
+        ]
+      },
+      "label": "Interrupted; saved request and caller result survive"
+    },
+    {
+      "id": "removed",
+      "when": {
+        "eq": [
+          {
+            "var": "cleanup"
+          },
+          "\"done\""
+        ]
+      },
+      "label": "Handed over; original removed"
+    },
+    {
+      "id": "cleanup_failed",
+      "when": {
+        "eq": [
+          {
+            "var": "cleanup"
+          },
+          "\"failed\""
+        ]
+      },
+      "label": "Handed over; original removal failed"
+    },
+    {
+      "id": "cleanup_active",
+      "when": {
+        "eq": [
+          {
+            "var": "cleanup"
+          },
+          "\"active\""
+        ]
+      },
+      "label": "Handed over; removing original after retention"
+    },
+    {
+      "id": "delivered",
+      "when": {
+        "eq": [
+          {
+            "var": "outcome"
+          },
+          "\"handedOver\""
+        ]
+      },
+      "label": "Handed over; retaining original"
+    },
+    {
+      "id": "conflict",
+      "when": {
+        "eq": [
+          {
+            "var": "reason"
+          },
+          "\"nameConflict\""
+        ]
+      },
+      "label": "Failed: another file has this name"
+    },
+    {
+      "id": "gone",
+      "when": {
+        "eq": [
+          {
+            "var": "reason"
+          },
+          "\"folderGone\""
+        ]
+      },
+      "label": "Failed: folder is missing"
+    },
+    {
+      "id": "full",
+      "when": {
+        "eq": [
+          {
+            "var": "reason"
+          },
+          "\"folderFull\""
+        ]
+      },
+      "label": "Failed: folder is full"
+    },
+    {
+      "id": "differences",
+      "when": {
+        "eq": [
+          {
+            "var": "reason"
+          },
+          "\"differentCopies\""
+        ]
+      },
+      "label": "Failed: differing-copy limit; last copy removed"
+    },
+    {
+      "id": "idle",
+      "when": {
+        "eq": [
+          {
+            "var": "outcome"
+          },
+          "\"notStarted\""
+        ]
+      },
+      "label": "Ready to hand over recording"
+    },
+    {
+      "id": "inspect",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"inspect\""
+        ]
+      },
+      "label": "Compare any existing named file"
+    },
+    {
+      "id": "inspect_taken",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"inspectTaken\""
+        ]
+      },
+      "label": "Compare the file that took the final name"
+    },
+    {
+      "id": "preclean",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"preclean\""
+        ]
+      },
+      "label": "Remove previous attempt’s hidden copy"
+    },
+    {
+      "id": "copy",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"copy\""
+        ]
+      },
+      "label": "Copy under the hidden name"
+    },
+    {
+      "id": "verify",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"verify\""
+        ]
+      },
+      "label": "Compare hidden copy with original"
+    },
+    {
+      "id": "discard",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"discard\""
+        ]
+      },
+      "label": "Remove a differing hidden copy"
+    },
+    {
+      "id": "publish",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"publish\""
+        ]
+      },
+      "label": "Publish verified copy under its final name"
+    },
+    {
+      "id": "all",
+      "when": true,
+      "label": "Hand-over record"
+    }
+  ],
+  "step": [
+    {
+      "id": "crash",
+      "when": {
+        "all": [
+          {
+            "eq": [
+              {
+                "from": "running"
+              },
+              "TRUE"
+            ]
+          },
+          {
+            "eq": [
+              {
+                "to": "running"
+              },
+              "FALSE"
+            ]
+          }
+        ]
+      },
+      "label": "Interrupt execution"
+    },
+    {
+      "id": "resume",
+      "when": {
+        "all": [
+          {
+            "eq": [
+              {
+                "from": "running"
+              },
+              "FALSE"
+            ]
+          },
+          {
+            "eq": [
+              {
+                "to": "running"
+              },
+              "TRUE"
+            ]
+          }
+        ]
+      },
+      "label": "Resume from saved record"
+    },
+    {
+      "id": "cleanup_done",
+      "when": {
+        "eq": [
+          {
+            "to": "cleanup"
+          },
+          "\"done\""
+        ]
+      },
+      "label": "Record successful original removal"
+    },
+    {
+      "id": "cleanup_failed",
+      "when": {
+        "eq": [
+          {
+            "to": "cleanup"
+          },
+          "\"failed\""
+        ]
+      },
+      "label": "Keep delivery successful and record cleanup failure"
+    },
+    {
+      "id": "delivered",
+      "when": {
+        "eq": [
+          {
+            "to": "outcome"
+          },
+          "\"handedOver\""
+        ]
+      },
+      "label": "Continue successful hand-over and retention work"
+    },
+    {
+      "id": "failed",
+      "when": {
+        "eq": [
+          {
+            "to": "outcome"
+          },
+          "\"failed\""
+        ]
+      },
+      "label": "Record failure and retain the original"
+    },
+    {
+      "id": "all",
+      "when": true,
+      "label": "Advance hand-over, caller result or saved request"
+    }
+  ]
+}
