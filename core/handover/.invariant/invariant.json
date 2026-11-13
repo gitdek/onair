@@ -1,0 +1,6 @@
+{
+  "name": "recording hand-over",
+  "module": ".invariant/specs/RecordingHandover.tla",
+  "code": "handover",
+  "language": "go"
+}
