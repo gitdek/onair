@@ -81,7 +81,7 @@ One Go app in two layers, and only one of them makes decisions.
 | :-- | :-- |
 | **1. Never lose a recording** | The menu-bar recorder, pieces on disk, recovery after a crash, the disk and length guards, and the hand-over |
 | **2. Stops when the meeting does** | Stops by itself when the call ends, names the recording, makes a lighter copy, and leaves a transcript beside the video |
-| **3. Live context** | While a meeting happens, a panel shows the earlier moments, notes and open items the conversation connects to |
+| **3. Live context** | While a meeting happens, a panel shows the earlier moments, notes and open items the conversation connects to. The spec says [where it's headed](docs/PRD.md#where-milestone-three-is-headed) |
 
 ## Status
 

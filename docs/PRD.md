@@ -132,6 +132,20 @@ Milestone one is done when these checks pass on the owner's Mac.
 
 The live loop and the interface with On the Record are described under [The whole idea](#the-whole-idea). Decisions 9 to 12 belong to milestone three and can wait until then.
 
+### Where milestone three is headed
+
+This is the direction, not settled design. Nothing in it is decided or built, and decisions 9 to 12 stand as they are.
+
+- **Fetch first, then judge.** When someone refers to the past, On Air fetches the matching record from On the Record in the background, through its read-only door on the Mac, with `search`, `find_connections` or `get_action_item`. On the next pass the decision model sees the claim and the record side by side, and scores how far they differ. That is how a contradiction is caught, and nothing waits on the fetch.
+- **Every turn carries its speaker.** The microphone and the call's sound reach On Air separately, before they are mixed for the file, so the live side can tell the person recording from everyone else. Names can come from the call's highlighted tile, as On the Record names speakers afterwards.
+- **Questions about the newest turn,** beside the seven in [the live loop](#the-live-loop): what kind of record would settle it (a past decision, an item's status, this speaker's history, a document, or none); how far it differs from the fetched record; where a decision stands (proposed, agreed or taken back); and whether a task has an owner. Two are parked as too noisy for now: two people using one word differently, and the talk leaving the agenda.
+- **Decisions that drift.** A decision taken back later in the same meeting, or one that differs from what was agreed in an earlier meeting, is shown with the record it differs from.
+- **A profile for each kind of meeting.** A brainstorm wants a quiet panel, and a spec review a strict one. Thresholds are picked by a setting or from the kind of recording, and their numbers come from a test on the owner's own meetings, never a guess.
+- **A decision list kept as a draft.** During the meeting On Air lists the decisions it marked, with when, who, and which records were on the panel. Afterwards the person accepts what goes to On the Record. Nothing is written during the meeting, so "During a meeting On Air only reads from On the Record" still holds.
+- **On screen.** A slim panel beside the call with the two or three strongest links. It is never in the recording, and never in what is shared on the call.
+- **Choosing the model.** Local first. A bake-off on the owner's own meetings decides between the shortlisted local models and a hosted one, and a hosted model is used only as decision 10 allows.
+- **Later, for fun:** reading the faces on a call. Nothing is designed.
+
 ## Not in milestone one
 
 - Stopping by itself, calendar names, the lighter copy, trimming and the transcript: milestone two.
