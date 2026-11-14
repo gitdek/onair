@@ -305,6 +305,24 @@ func TestAWindowThatClosesMidRecordingEndsIt(t *testing.T) {
 	}
 }
 
+// A window that closes mid-recording says so, and what capture left out
+// of what it recorded.
+func TestAWindowThatClosesSaysWhatCaptureLeftOut(t *testing.T) {
+	f := newFixture(t)
+	f.connected(builtIn)
+	f.app.WindowPicked("Video Call")
+	f.started()
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Event(WindowClosed, "")
+	f.app.Event(Finished, "0 frames and 2 sound buffers were dropped, and 0 frames of sound came too late or too early to mix.")
+	f.idle(f.app)
+	s := f.edge.latest()
+	if !strings.HasPrefix(s.note, "Recording stopped by itself: the window being recorded closed.") || !strings.Contains(s.note, "2 sound buffers were dropped") {
+		t.Fatalf("after the window closed: %+v", s)
+	}
+}
+
 func TestAChoiceCantChangeWhileRecording(t *testing.T) {
 	f := newFixture(t)
 	f.connected(builtIn, wide)
@@ -381,6 +399,22 @@ func TestWhatTheEdgeCantFindGivesWay(t *testing.T) {
 	g.app.Event(Started, "")
 	if s := g.edge.latest(); s.note != "The picked area doesn't fit the display any more, so On Air is recording the whole display." {
 		t.Fatalf("while recording: %+v", s)
+	}
+}
+
+// Settings that can't be read are said at launch beside what the launch
+// recovered, rather than replaced by it.
+func TestUnreadableSettingsAreSaidBesideARecovery(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.app, "one|")
+	if err := os.WriteFile(f.settings, []byte("not settings"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	again := f.newApp()
+	again.Displays([]Display{builtIn})
+	again.Launched()
+	if s := f.edge.latest(); !strings.Contains(s.note, "couldn't read what to record") || !strings.Contains(s.note, "Recovered a recording that was cut short") {
+		t.Fatalf("after the launch: %+v", s)
 	}
 }
 
