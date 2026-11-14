@@ -10,3 +10,4 @@
 .env
 *.mov
 *.mp4
+build/
