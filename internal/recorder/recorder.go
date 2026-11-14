@@ -795,6 +795,9 @@ func word(r delivery.Report, folder string) string {
 		return fmt.Sprintf("Handed “%s” to “%s”.", r.File, to)
 	case r.Failed != "":
 		return fmt.Sprintf("“%s” couldn't be handed to “%s”: %s. It is safe in %s, and On Air tries again at the next launch and when a folder is picked.", r.File, to, r.Failed, safe)
+	case r.Err != nil && !r.Delivered && errors.Is(r.Err, delivery.ErrStuck):
+		// Carried on, it stops there again.
+		return fmt.Sprintf("Handing “%s” to “%s” stopped: %v. It is safe in %s, and stays there: On Air can't carry this hand-over on by itself.", r.File, to, r.Err, safe)
 	case r.Err != nil && !r.Delivered:
 		return fmt.Sprintf("Handing “%s” to “%s” stopped: %v. It is safe in %s, and On Air carries on at the next launch and when a folder is picked.", r.File, to, r.Err, safe)
 	case r.RemoveErr != nil:

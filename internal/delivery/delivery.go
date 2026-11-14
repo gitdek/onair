@@ -47,11 +47,22 @@ const (
 // on, it stops there again, so the hand-over can't go on by itself.
 var ErrStuck = errors.New("the hand-over's core has no step from here")
 
-// errNameFreed says the core is stuck where its model never goes. A copy
-// can't take the recording's name because a file has it. The core then has
-// that file compared, and a file that is gone by then leaves it where it was,
-// asking for the same comparison again.
-var errNameFreed = errors.New("a file had its name in the folder, then went away, and the hand-over can't go on from there")
+// stuck is an error that is ErrStuck.
+type stuck string
+
+func (e stuck) Error() string        { return string(e) }
+func (e stuck) Is(target error) bool { return target == ErrStuck }
+
+var (
+	// errNameFreed says the core is stuck where its model never goes. A
+	// copy can't take the recording's name because a file has it. The core
+	// then has that file compared, and a file that is gone by then leaves
+	// it where it was, asking for the same comparison again.
+	errNameFreed error = stuck("a file had its name in the folder, then went away, and the hand-over can't go on from there")
+	// errCopyGone says the copy was removed from under its hidden name
+	// before it was given its name, which the core has no reply for.
+	errCopyGone error = stuck("the copy under the hidden name is gone, so it can't be given its name")
+)
 
 // Delivery is one recording's hand-over.
 type Delivery struct {
@@ -541,7 +552,7 @@ func (d *Delivery) publish(hidden, final string) (handover.Reply, error) {
 		if _, err := os.Lstat(final); err == nil {
 			return handover.Taken, nil
 		}
-		return handover.NoReply, errors.New("the copy under the hidden name is gone, so it can't be given its name")
+		return handover.NoReply, errCopyGone
 	}
 	return d.failed(err)
 }
