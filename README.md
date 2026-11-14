@@ -11,10 +11,10 @@
 </p>
 
 <p align="center">
-  <img alt="Status: founding" src="https://img.shields.io/badge/status-founding-6e7781?style=flat-square">
+  <img alt="Status: milestone one, under way" src="https://img.shields.io/badge/status-milestone%20one%2C%20under%20way-bf8700?style=flat-square">
   <img alt="Go 1.27" src="https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white">
   <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-1f2328?style=flat-square&logo=apple&logoColor=white">
-  <img alt="Rules: 12 written, 0 proved yet" src="https://img.shields.io/badge/rules-12%20written%20%C2%B7%200%20proved%20yet-6e7781?style=flat-square">
+  <img alt="Rules: 12 written, 4 with a proved core, none held by the app yet" src="https://img.shields.io/badge/rules-12%20written%20%C2%B7%204%20with%20a%20proved%20core-6e7781?style=flat-square">
   <img alt="Built with Invariant" src="https://img.shields.io/badge/built%20with-Invariant-0CA678?style=flat-square">
 </p>
 
@@ -29,7 +29,7 @@ Most screen recorders hold a recording together with an index they write at the 
 | Leave a file for someone to rename, move and upload | Hands each finished recording to its archive by itself, whole or not at all |
 | Keep going until someone remembers to stop them | Asks when a recording runs long, and stops cleanly before the disk fills |
 
-> **Status: founding.** The rules are written and nothing is built yet. [`docs/PRD.md`](docs/PRD.md) is the spec, and [`SPEC.md`](SPEC.md) says what exists today.
+> **Status: milestone one, under way.** The recorder runs from the menu bar and keeps each recording in pieces that survive a kill, and the hand-over's core is proved, though nothing calls it yet. It hasn't been through its hand checks. [`docs/PRD.md`](docs/PRD.md) is the spec, and [`SPEC.md`](SPEC.md) says what exists today.
 
 ## How it works
 
@@ -86,7 +86,7 @@ One Go app in two layers, and only one of them makes decisions.
 ## Status
 
 - [x] **Founding.** The spec's first cut, the rules for agents, the checks and the gate.
-- [ ] **Milestone one.** Nothing built yet.
+- [ ] **Milestone one.** Under way. Built: the menu-bar recorder, which records the main display with its sound and the microphone mixed into one track, in pieces that each play on their own, joins them at Stop and recovers them after a kill; and the hand-over's core, proved, which nothing calls yet. To come: the hand-over itself, the disk and length guards, carrying a recording on after a crash, and the hand checks on the owner's Mac.
 - [ ] **Milestone two.**
 - [ ] **Milestone three.**
 
@@ -96,6 +96,8 @@ One Go app in two layers, and only one of them makes decisions.
 go vet ./...
 go test ./...
 tools/check-format
+go run ./cmd/onair selftest       # on a Mac: made-up picture and sound through the real writer, no permission asked
+tools/build-app                   # on a Mac: builds On Air.app into build/
 python3 docs/assets/generate.py   # redraws the README's graphics
 ```
 

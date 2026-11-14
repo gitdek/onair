@@ -1,0 +1,47 @@
+#!/bin/bash
+# Builds "On Air.app" into build/. On Air is a menu-bar app, and macOS gives
+# the screen-recording permission to an app, so it is run as one.
+#
+# ONAIR_SIGN names the signing identity. With a real one, macOS remembers the
+# permission across builds. Without one the app is signed ad hoc, and macOS
+# asks again after each build.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+app="build/On Air.app"
+mkdir -p "$app/Contents/MacOS"
+go build -o "$app/Contents/MacOS/onair" ./cmd/onair
+
+cat > "$app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.gitdek.onair</string>
+	<key>CFBundleName</key>
+	<string>On Air</string>
+	<key>CFBundleDisplayName</key>
+	<string>On Air</string>
+	<key>CFBundleExecutable</key>
+	<string>onair</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>On Air records your microphone with the meeting.</string>
+</dict>
+</plist>
+PLIST
+
+codesign --force --sign "${ONAIR_SIGN:--}" "$app"
+echo "$app"
