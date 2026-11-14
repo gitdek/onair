@@ -11,6 +11,7 @@ typedef struct {
     double pieceSeconds; // how long a piece is
     int videoBitrate;    // bits a second
     int microphone;      // 1 to mix the microphone into the display's sound
+    double quietSeconds; // how long to wait for the microphone's sound before saying none came; 0 never
     int window;          // 1 to record the picked window
     const char *display; // otherwise the display to record, by its identifier, or "" for the main one
     double areaX, areaY, areaWidth, areaHeight; // a part of it, in its points from its top left; no width for all of it
@@ -25,6 +26,10 @@ enum {
     ONAIR_TARGET_GONE = 5,       // capture didn't start because what it was asked to record isn't there, and isn't running
     ONAIR_WINDOW_CLOSED = 6,     // the picked window closed
     ONAIR_PICKER_FAILED = 7,     // the window picker didn't open; the message says why
+    ONAIR_MICROPHONE_ALLOWED = 8, // On Air may use the microphone
+    ONAIR_MICROPHONE_REFUSED = 9, // it may not
+    ONAIR_MICROPHONE_QUIET = 10,  // none of the microphone's sound came in quietSeconds; the message says what came instead
+    ONAIR_MICROPHONE_HEARD = 11,  // its sound came after ONAIR_MICROPHONE_QUIET
 };
 
 // What onairMenu reports.
@@ -54,6 +59,11 @@ typedef struct {
     int picked; // 1 for the one that is marked
 } onair_choice;
 
+// AskMicrophone asks whether On Air may use the microphone and returns at
+// once. When macOS hasn't asked the person yet, it asks them now.
+// ONAIR_MICROPHONE_ALLOWED or ONAIR_MICROPHONE_REFUSED follows, once there is
+// an answer.
+void onair_ask_microphone(void);
 // Start asks for capture and returns at once. ONAIR_STARTED, ONAIR_FAILED,
 // ONAIR_MICROPHONE_FAILED or ONAIR_TARGET_GONE follows. Segments arrive
 // through onairPiece: kind 0 is the opening segment, kind 1 a media segment.

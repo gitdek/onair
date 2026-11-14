@@ -23,6 +23,7 @@ type fakeEdge struct {
 	choices  Choices
 	areas    []string // displays an area was asked for on
 	windows  int      // times a window was asked for
+	asks     int      // times the microphone was asked for
 }
 
 type shown struct {
@@ -34,6 +35,11 @@ func (e *fakeEdge) Start(c Config) {
 	e.mu.Lock()
 	e.starts++
 	e.asked = append(e.asked, c)
+	e.mu.Unlock()
+}
+func (e *fakeEdge) AskMicrophone() {
+	e.mu.Lock()
+	e.asks++
 	e.mu.Unlock()
 }
 func (e *fakeEdge) Stop() { e.mu.Lock(); e.stops++; e.mu.Unlock() }
@@ -67,6 +73,13 @@ func (e *fakeEdge) counts() (starts, stops, quits int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.starts, e.stops, e.quits
+}
+
+// questions says how many times the microphone was asked for.
+func (e *fakeEdge) questions() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.asks
 }
 
 // microphones says, for each start, whether it asked for the microphone.
@@ -460,6 +473,7 @@ func TestQuitFinishesTheRecordingFirst(t *testing.T) {
 func TestTheDisplayIsRecordedWhenTheMicrophoneCantBe(t *testing.T) {
 	f := withMicrophone(t)
 	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
 	f.app.Event(MicrophoneFailed, "no microphone was found.")
 	if asked := f.edge.microphones(); len(asked) != 2 || !asked[0] || asked[1] {
 		t.Fatalf("starts asked for the microphone: %v", asked)
@@ -485,7 +499,8 @@ func TestTheDisplayIsRecordedWhenTheMicrophoneCantBe(t *testing.T) {
 	}
 	// The next recording asks for the microphone again.
 	f.app.Menu(Start)
-	if asked := f.edge.microphones(); len(asked) != 3 || !asked[2] {
+	f.app.Event(MicrophoneAllowed, "")
+	if asked := f.edge.microphones(); len(asked) != 3 || !asked[2] || f.edge.questions() != 2 {
 		t.Fatalf("starts asked for the microphone: %v", asked)
 	}
 	f.app.Event(Started, "")
@@ -499,6 +514,7 @@ func TestTheMicrophoneIsLeftOutOnceARecording(t *testing.T) {
 	// and nothing is kept.
 	f := withMicrophone(t)
 	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
 	f.app.Event(MicrophoneFailed, "On Air isn't allowed to use it.")
 	f.app.Event(Failed, "On Air can't see the screen.")
 	f.idle(f.app)
@@ -514,6 +530,7 @@ func TestTheMicrophoneIsLeftOutOnceARecording(t *testing.T) {
 	// A second word about the microphone is a failure, not a third start.
 	g := withMicrophone(t)
 	g.app.Menu(Start)
+	g.app.Event(MicrophoneAllowed, "")
 	g.app.Event(MicrophoneFailed, "capture didn't start with it.")
 	g.app.Event(MicrophoneFailed, "capture didn't start with it, again.")
 	g.idle(g.app)
@@ -537,6 +554,7 @@ func TestTheMicrophoneIsLeftOutOnceARecording(t *testing.T) {
 func TestARecordingWithoutTheMicrophoneThatStopsByItselfSaysBoth(t *testing.T) {
 	f := withMicrophone(t)
 	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
 	f.app.Event(MicrophoneFailed, "no microphone was found.")
 	f.app.Event(Started, "")
 	f.app.Segment(true, []byte("OPEN|"))
@@ -578,6 +596,7 @@ func TestQuitWhileStartingFinishesTheRecording(t *testing.T) {
 	// Quit while the microphone is being left out doesn't start again.
 	g := withMicrophone(t)
 	g.app.Menu(Start)
+	g.app.Event(MicrophoneAllowed, "")
 	g.app.Menu(Quit)
 	g.app.Event(MicrophoneFailed, "no microphone was found.")
 	g.idle(g.app)
@@ -589,5 +608,197 @@ func TestQuitWhileStartingFinishesTheRecording(t *testing.T) {
 	}
 	if starts, _, quits := g.edge.counts(); starts != 1 || quits != 1 {
 		t.Fatalf("quit while starting with the microphone: %d starts, %d quits", starts, quits)
+	}
+}
+
+// The microphone is asked for before capture starts. Capture starts once
+// there is an answer, with the microphone when it is allowed.
+func TestTheMicrophoneIsAskedForBeforeCaptureStarts(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	if starts, _, _ := f.edge.counts(); starts != 0 || f.edge.questions() != 1 {
+		t.Fatalf("Start asked for the microphone %d times and started capture %d times", f.edge.questions(), starts)
+	}
+	waiting := "Recording starts once macOS's question about the microphone is answered."
+	if s := f.edge.latest(); s.recording || s.note != waiting || f.edge.latestChoices().Open {
+		t.Fatalf("while the microphone is asked for the dot shows %+v, %+v", s, f.edge.latestChoices())
+	}
+	// Another Start waits for the same answer, and asks nothing more.
+	f.app.Menu(Start)
+	if starts, _, _ := f.edge.counts(); starts != 0 || f.edge.questions() != 1 {
+		t.Fatalf("a second Start asked for the microphone %d times and started capture %d times", f.edge.questions(), starts)
+	}
+	if s := f.edge.latest(); s.recording || s.note != waiting {
+		t.Fatalf("a second Start shows %+v", s)
+	}
+	f.app.Event(MicrophoneAllowed, "")
+	if asked := f.edge.microphones(); len(asked) != 1 || !asked[0] {
+		t.Fatalf("starts asked for the microphone: %v", asked)
+	}
+	if s := f.edge.latest(); s.recording || s.note != "Starting…" {
+		t.Fatalf("once allowed the dot shows %+v", s)
+	}
+	f.app.Event(Started, "")
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("recording with the microphone shows %+v", s)
+	}
+	// An answer that nothing waits for starts nothing.
+	f.app.Event(MicrophoneAllowed, "")
+	f.app.Event(MicrophoneRefused, "")
+	if starts, _, _ := f.edge.counts(); starts != 1 {
+		t.Fatalf("capture was started %d times", starts)
+	}
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("a late answer shows %+v", s)
+	}
+	// A recording without the microphone doesn't ask for it.
+	g := newFixture(t)
+	g.app.Menu(Start)
+	if starts, _, _ := g.edge.counts(); starts != 1 || g.edge.questions() != 0 {
+		t.Fatalf("without the microphone, Start asked for it %d times and started capture %d times", g.edge.questions(), starts)
+	}
+}
+
+// A refused microphone leaves the recording without it, and the menu says
+// so and how to allow it, while it records and once it is saved. The next
+// recording asks again.
+func TestARefusedMicrophoneIsSaidWithHowToAllowIt(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneRefused, "")
+	if asked := f.edge.microphones(); len(asked) != 1 || asked[0] {
+		t.Fatalf("starts asked for the microphone: %v", asked)
+	}
+	if s := f.edge.latest(); s.recording || s.note != "Starting without the microphone…" {
+		t.Fatalf("starting without the microphone shows %+v", s)
+	}
+	f.app.Event(Started, "")
+	refused := "On Air isn't allowed to use it. Allow On Air in System Settings, Privacy & Security, Microphone, then start a new recording."
+	if s := f.edge.latest(); !s.recording || s.note != "The microphone isn't being recorded: "+refused {
+		t.Fatalf("recording without the microphone shows %+v", s)
+	}
+	// Word of the microphone's sound means nothing in a recording without it.
+	f.app.Event(MicrophoneQuiet, "nothing came from it.")
+	if s := f.edge.latest(); s.note != "The microphone isn't being recorded: "+refused {
+		t.Fatalf("word of a microphone that isn't recorded shows %+v", s)
+	}
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Menu(Stop)
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	names := f.files()
+	if len(names) != 1 {
+		t.Fatalf("recordings: %v", names)
+	}
+	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != "The microphone wasn't recorded: "+refused {
+		t.Fatalf("after stopping the dot shows %+v", s)
+	}
+	// Allowed since, the next recording has it.
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
+	f.app.Event(Started, "")
+	if asked := f.edge.microphones(); len(asked) != 2 || !asked[1] || f.edge.questions() != 2 {
+		t.Fatalf("starts asked for the microphone: %v, after %d questions", asked, f.edge.questions())
+	}
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("recording with the microphone shows %+v", s)
+	}
+}
+
+// Quit while the microphone is asked for quits at once: nothing has been
+// recorded, nothing is left in the spool, and an answer after it starts
+// nothing.
+func TestQuitWhileTheMicrophoneIsAskedFor(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Menu(Quit)
+	f.idle(f.app)
+	for i := 0; i < 2000; i++ {
+		if _, _, quits := f.edge.counts(); quits == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	f.app.Event(MicrophoneAllowed, "")
+	if starts, _, quits := f.edge.counts(); starts != 0 || quits != 1 {
+		t.Fatalf("quit while the microphone was asked for: %d starts, %d quits", starts, quits)
+	}
+	if entries, _ := os.ReadDir(f.spool); len(entries) != 0 {
+		t.Fatalf("quit while the microphone was asked for left a recording: %v", entries)
+	}
+}
+
+// The menu says when none of the microphone's sound has come, and stops
+// saying it once it comes.
+func TestTheMenuSaysWhenTheMicrophoneIsntHeard(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
+	f.app.Event(Started, "")
+	f.app.Event(MicrophoneQuiet, "only silence came from it.")
+	quiet := "The microphone isn't being heard: only silence came from it. If macOS asked about the microphone, allow it, then stop and start again. Otherwise check that it's plugged in and not muted."
+	if s := f.edge.latest(); !s.recording || s.note != quiet {
+		t.Fatalf("a microphone that isn't heard shows %+v", s)
+	}
+	f.app.Event(MicrophoneHeard, "")
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("once the microphone is heard the dot shows %+v", s)
+	}
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Menu(Stop)
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	// It was heard in the end, so nothing is said of it once saved.
+	if s := f.edge.latest(); s.recording || s.last == "" || s.note != "" {
+		t.Fatalf("after stopping the dot shows %+v", s)
+	}
+	// Said with what else the menu says while recording.
+	g := withMicrophone(t)
+	g.connected(builtIn, wide)
+	g.app.PickDisplay("B")
+	g.connected(builtIn)
+	g.app.Menu(Start)
+	g.app.Event(MicrophoneAllowed, "")
+	g.app.Event(Started, "")
+	g.app.Event(MicrophoneQuiet, "")
+	if s := g.edge.latest(); s.note != "The picked display isn't connected, so On Air is recording the main display. The microphone isn't being heard: none of its sound came. If macOS asked about the microphone, allow it, then stop and start again. Otherwise check that it's plugged in and not muted." {
+		t.Fatalf("a fallback and a microphone that isn't heard show %+v", s)
+	}
+}
+
+// A microphone that is never heard is said once the recording is saved,
+// with what came instead, also when capture said so after Stop.
+func TestAMicrophoneNeverHeardIsSaidOnceSaved(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
+	f.app.Event(Started, "")
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Menu(Stop)
+	f.app.Event(MicrophoneQuiet, "nothing came from it.")
+	if s := f.edge.latest(); s.note != "Finishing…" {
+		t.Fatalf("word of the microphone while finishing shows %+v", s)
+	}
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	saved := "The microphone wasn't heard: nothing came from it."
+	if s := f.edge.latest(); s.recording || s.last == "" || s.note != saved {
+		t.Fatalf("after stopping the dot shows %+v", s)
+	}
+	// Word of it with nothing recording changes nothing.
+	f.app.Event(MicrophoneQuiet, "only silence came from it.")
+	f.app.Event(MicrophoneHeard, "")
+	if s := f.edge.latest(); s.note != saved {
+		t.Fatalf("word of the microphone after the recording shows %+v", s)
+	}
+	// The next recording starts afresh.
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneAllowed, "")
+	f.app.Event(Started, "")
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("the next recording shows %+v", s)
 	}
 }

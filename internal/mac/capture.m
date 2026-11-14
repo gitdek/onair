@@ -23,6 +23,52 @@ static void report(int code, NSString *text) {
     onairEvent(code, (char *)(text.UTF8String ?: ""));
 }
 
+// HasSound says whether a buffer holds a sample above -120 dB of full scale,
+// far below the hiss of a working microphone. A microphone that macOS mutes
+// may send silence, all zeros, rather than nothing. A buffer it can't read is
+// taken as sound, so silence is never claimed without being seen.
+static BOOL OAHasSound(CMSampleBufferRef samples) {
+    CMAudioFormatDescriptionRef description = CMSampleBufferGetFormatDescription(samples);
+    AVAudioFrameCount frames = (AVAudioFrameCount)CMSampleBufferGetNumSamples(samples);
+    if (!description || frames == 0) return NO;
+    AVAudioFormat *format = [[AVAudioFormat alloc] initWithCMAudioFormatDescription:description];
+    AVAudioPCMBuffer *buffer = format ? [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:frames] : nil;
+    if (!buffer) return YES;
+    buffer.frameLength = frames;
+    if (CMSampleBufferCopyPCMDataIntoAudioBufferList(samples, 0, (int32_t)frames, buffer.mutableAudioBufferList) != noErr) return YES;
+    const AudioBufferList *list = buffer.audioBufferList;
+    for (UInt32 b = 0; b < list->mNumberBuffers; b++) {
+        const void *data = list->mBuffers[b].mData;
+        size_t bytes = list->mBuffers[b].mDataByteSize;
+        if (!data) continue;
+        switch (format.commonFormat) {
+        case AVAudioPCMFormatFloat32:
+            for (size_t i = 0; i < bytes / sizeof(float); i++) {
+                if (fabsf(((const float *)data)[i]) > 1e-6f) return YES;
+            }
+            break;
+        case AVAudioPCMFormatFloat64:
+            for (size_t i = 0; i < bytes / sizeof(double); i++) {
+                if (fabs(((const double *)data)[i]) > 1e-6) return YES;
+            }
+            break;
+        case AVAudioPCMFormatInt16:
+            for (size_t i = 0; i < bytes / sizeof(int16_t); i++) {
+                if (((const int16_t *)data)[i] != 0) return YES;
+            }
+            break;
+        case AVAudioPCMFormatInt32:
+            for (size_t i = 0; i < bytes / sizeof(int32_t); i++) {
+                if (labs((long)((const int32_t *)data)[i]) > 2147) return YES;
+            }
+            break;
+        default:
+            return YES;
+        }
+    }
+    return NO;
+}
+
 @implementation OACapture {
     dispatch_queue_t _queue;
     dispatch_source_t _timer;
@@ -36,6 +82,10 @@ static void report(int code, NSString *text) {
     CMTime _clockOffset;    // the stream's clock minus the host's
     BOOL _windowed;         // recording a window
     BOOL _stopping, _ended;
+    CMTime _startedAt;      // when capture started, on the host's clock
+    long _micBuffers;       // buffers that came from the microphone
+    BOOL _micHeard;         // one of them held sound
+    BOOL _micQuietSaid;     // Go was told that none did
 }
 
 - (instancetype)init {
@@ -192,6 +242,7 @@ static void report(int code, NSString *text) {
                 [self keepMoving];
             });
             dispatch_resume(self->_timer);
+            self->_startedAt = CMClockGetTime(CMClockGetHostTimeClock());
             report(ONAIR_STARTED, [NSString stringWithFormat:@"%d by %d%@", self->_width, self->_height, self->_cfg.microphone ? @", with the microphone" : @""]);
         });
     }];
@@ -200,6 +251,7 @@ static void report(int code, NSString *text) {
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)samples ofType:(SCStreamOutputType)type {
     if (_ended || !CMSampleBufferIsValid(samples)) return;
     if (type == SCStreamOutputTypeAudio || type == SCStreamOutputTypeMicrophone) {
+        if (type == SCStreamOutputTypeMicrophone) [self listen:samples];
         // Sound before the first whole frame has no timeline yet, and is
         // left out.
         [_mixer add:samples source:type == SCStreamOutputTypeAudio ? 0 : 1];
@@ -249,8 +301,28 @@ static void report(int code, NSString *text) {
     }
 }
 
+// Listen notes that a buffer came from the microphone, and whether any has
+// held sound. Once one has, after Go was told none had, Go hears that it came.
+- (void)listen:(CMSampleBufferRef)samples {
+    _micBuffers++;
+    if (_micHeard || !OAHasSound(samples)) return;
+    _micHeard = YES;
+    if (_micQuietSaid) report(ONAIR_MICROPHONE_HEARD, @"");
+}
+
+// CheckMicrophone tells Go, once, when the microphone was asked for and none
+// of its sound has come in the time Go gave it, and what came instead.
+- (void)checkMicrophone {
+    if (!_cfg.microphone || _cfg.quietSeconds <= 0 || _micHeard || _micQuietSaid || !CMTIME_IS_VALID(_startedAt)) return;
+    if (CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), _startedAt)) < _cfg.quietSeconds) return;
+    _micQuietSaid = YES;
+    report(ONAIR_MICROPHONE_QUIET, _micBuffers ? @"only silence came from it." : @"nothing came from it.");
+}
+
 - (void)keepMoving {
-    if (_ended || _stopping || !_last) return;
+    if (_ended || _stopping) return;
+    [self checkMicrophone];
+    if (!_last) return;
     CMTime now = CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()), _clockOffset);
     // Sound keeps pace with the clock, silent where none came, so the track
     // has no hole when nothing plays.
@@ -390,5 +462,20 @@ void onair_start(onair_config cfg) {
 void onair_stop(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [current stop];
+    });
+}
+
+void onair_ask_microphone(void) {
+    // Go asks with its lock held, so the answer comes after this returns,
+    // even when macOS knows it already.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+        if (status == AVAuthorizationStatusNotDetermined) {
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+                report(granted ? ONAIR_MICROPHONE_ALLOWED : ONAIR_MICROPHONE_REFUSED, @"");
+            }];
+            return;
+        }
+        report(status == AVAuthorizationStatusAuthorized ? ONAIR_MICROPHONE_ALLOWED : ONAIR_MICROPHONE_REFUSED, @"");
     });
 }

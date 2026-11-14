@@ -48,7 +48,7 @@ func main() {
 	// folder of its own too, until the hand-over to another folder is wired
 	// in.
 	support := filepath.Join(home, "Library", "Application Support", "On Air")
-	app := recorder.New(edge{}, recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true},
+	app := recorder.New(edge{}, recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app})
 	mac.Run()
@@ -59,8 +59,9 @@ type edge struct{}
 
 func (edge) Start(c recorder.Config) {
 	mac.Start(mac.Config{Rows: c.Rows, FPS: c.FPS, PieceSeconds: c.PieceSeconds, VideoBitrate: c.VideoBitrate, Microphone: c.Microphone,
-		Window: c.Target.Window, Display: c.Target.Display, Area: mac.Area(c.Target.Area)})
+		QuietSeconds: c.QuietSeconds, Window: c.Target.Window, Display: c.Target.Display, Area: mac.Area(c.Target.Area)})
 }
+func (edge) AskMicrophone()                         { mac.AskMicrophone() }
 func (edge) Stop()                                  { mac.Stop() }
 func (edge) Show(recording bool, last, note string) { mac.Show(recording, last, note) }
 func (edge) SelectArea(display string)              { mac.SelectArea(display) }
@@ -97,6 +98,14 @@ func (b bridge) Event(code int, message string) {
 		b.app.Event(recorder.WindowClosed, message)
 	case mac.PickerFailed:
 		b.app.Event(recorder.PickerFailed, message)
+	case mac.MicrophoneAllowed:
+		b.app.Event(recorder.MicrophoneAllowed, message)
+	case mac.MicrophoneRefused:
+		b.app.Event(recorder.MicrophoneRefused, message)
+	case mac.MicrophoneQuiet:
+		b.app.Event(recorder.MicrophoneQuiet, message)
+	case mac.MicrophoneHeard:
+		b.app.Event(recorder.MicrophoneHeard, message)
 	}
 }
 

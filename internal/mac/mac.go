@@ -63,6 +63,14 @@ const (
 	TargetGone   = int(C.ONAIR_TARGET_GONE)
 	WindowClosed = int(C.ONAIR_WINDOW_CLOSED)
 	PickerFailed = int(C.ONAIR_PICKER_FAILED)
+	// MicrophoneAllowed and MicrophoneRefused answer AskMicrophone.
+	MicrophoneAllowed = int(C.ONAIR_MICROPHONE_ALLOWED)
+	MicrophoneRefused = int(C.ONAIR_MICROPHONE_REFUSED)
+	// MicrophoneQuiet says none of the microphone's sound came in
+	// Config.QuietSeconds, and the message says what came instead.
+	// MicrophoneHeard says its sound came after that.
+	MicrophoneQuiet = int(C.ONAIR_MICROPHONE_QUIET)
+	MicrophoneHeard = int(C.ONAIR_MICROPHONE_HEARD)
 )
 
 // What Menu reports.
@@ -84,6 +92,7 @@ type Config struct {
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
 	Microphone   bool    // mix the microphone into the display's sound
+	QuietSeconds float64 // how long to wait for the microphone's sound before saying none came
 	Window       bool    // record the picked window
 	Display      string  // otherwise this display, or the main one when empty
 	Area         Area    // an area of it, or all of it when it has no width
@@ -171,7 +180,7 @@ func Start(c Config) {
 	display := C.CString(c.Display)
 	defer C.free(unsafe.Pointer(display))
 	C.onair_start(C.onair_config{rows: C.int(c.Rows), fps: C.int(c.FPS), pieceSeconds: C.double(c.PieceSeconds),
-		videoBitrate: C.int(c.VideoBitrate), microphone: flag(c.Microphone), window: flag(c.Window), display: display,
+		videoBitrate: C.int(c.VideoBitrate), microphone: flag(c.Microphone), quietSeconds: C.double(c.QuietSeconds), window: flag(c.Window), display: display,
 		areaX: C.double(c.Area.X), areaY: C.double(c.Area.Y), areaWidth: C.double(c.Area.Width), areaHeight: C.double(c.Area.Height)})
 }
 
@@ -184,6 +193,11 @@ func flag(b bool) C.int {
 
 // Stop ends capture: Finished follows the last segment.
 func Stop() { C.onair_stop() }
+
+// AskMicrophone asks whether On Air may use the microphone, and returns at
+// once: MicrophoneAllowed or MicrophoneRefused follows, once there is an
+// answer. When macOS hasn't asked the person yet, it asks them now.
+func AskMicrophone() { C.onair_ask_microphone() }
 
 // SelfTest writes segments from made-up frames and sound through the same
 // writer capture uses, each sound track straight to the writer, and returns
