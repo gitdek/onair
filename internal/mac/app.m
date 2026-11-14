@@ -1,6 +1,7 @@
 #import "recorder.h"
 #import "choose.h"
 #import <AppKit/AppKit.h>
+#import <stdatomic.h>
 #import "_cgo_export.h"
 
 // OAApp is the menu-bar item: a dot, grey when idle and red with a running
@@ -163,9 +164,20 @@ static void onMain(dispatch_block_t block) {
     }
 }
 
+// Go calls onair_show and onair_choices under its lock, in the order it
+// decides, and each call carries all there is to show. One from the main
+// thread is applied at once, ahead of any from other threads still on their
+// way there, so those are numbered as they are asked for and dropped when a
+// newer one has been applied: an older answer never replaces a newer one.
+static atomic_long showsAsked, choicesAsked;
+static long showsDone, choicesDone; // the newest applied, on the main thread
+
 void onair_show(int recording, const char *last, const char *note) {
+    long asked = atomic_fetch_add(&showsAsked, 1) + 1;
     NSString *l = [NSString stringWithUTF8String:last ?: ""], *n = [NSString stringWithUTF8String:note ?: ""];
     onMain(^{
+        if (asked <= showsDone) return;
+        showsDone = asked;
         [app show:recording != 0 last:l note:n];
     });
 }
@@ -180,7 +192,10 @@ void onair_choices(int open, const onair_choice *displays, int count, const char
         }];
     }
     NSString *a = [NSString stringWithUTF8String:area ?: ""], *w = [NSString stringWithUTF8String:window ?: ""];
+    long asked = atomic_fetch_add(&choicesAsked, 1) + 1;
     onMain(^{
+        if (asked <= choicesDone) return;
+        choicesDone = asked;
         [app choices:open != 0 displays:list area:a window:w];
     });
 }
