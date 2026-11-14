@@ -435,8 +435,10 @@ func (d *Delivery) same(path string) (bool, error) {
 func ended(err error) bool { return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) }
 
 // copy copies On Air's own copy to path, the hidden name, and has it whole
-// on disk before it says so. A copy cut short before is made again from the
-// start, under the same name.
+// on disk before it says so. The copy is always a new file. What is under
+// the hidden name, such as a copy cut short, goes first, so the copy is
+// never written through a link into another file. A folder there is left
+// as it is, and the step stops.
 func (d *Delivery) copy(path string) (handover.Reply, error) {
 	if reply, err := d.folderThere(); reply != handover.NoReply || err != nil {
 		return reply, err
@@ -446,8 +448,12 @@ func (d *Delivery) copy(path string) (handover.Reply, error) {
 		return handover.NoReply, fmt.Errorf("On Air's own copy: %w", err)
 	}
 	defer src.Close()
-	// Never through a link: the hidden name is this hand-over's own.
-	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	if info, err := os.Lstat(path); err == nil && !info.IsDir() {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return d.failed(err)
+		}
+	}
+	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		return d.failed(err)
 	}
