@@ -1,5 +1,7 @@
 #import "recorder.h"
+#import "choose.h"
 #import <AppKit/AppKit.h>
+#import <stdatomic.h>
 #import "_cgo_export.h"
 
 // OAApp is the menu-bar item: a dot, grey when idle and red with a running
@@ -7,6 +9,7 @@
 // what Go last told it to show.
 @interface OAApp : NSObject <NSApplicationDelegate, NSMenuDelegate>
 - (void)show:(BOOL)recording last:(NSString *)last note:(NSString *)note;
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window;
 @end
 
 @implementation OAApp {
@@ -15,6 +18,9 @@
     NSDate *_since;
     BOOL _recording;
     NSString *_last, *_note;
+    BOOL _open;
+    NSArray<NSDictionary *> *_displays;
+    NSString *_area, *_window;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
@@ -24,7 +30,13 @@
     menu.autoenablesItems = NO;
     _item.menu = menu;
     [self draw];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(screensChanged:) name:NSApplicationDidChangeScreenParametersNotification object:nil];
+    OAReportDisplays();
     onairMenu(0); // the app is up
+}
+
+- (void)screensChanged:(NSNotification *)notification {
+    OAReportDisplays();
 }
 
 - (void)show:(BOOL)recording last:(NSString *)last note:(NSString *)note {
@@ -40,6 +52,13 @@
     _last = last.length ? last : nil;
     _note = note.length ? note : nil;
     [self draw];
+}
+
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window {
+    _open = open;
+    _displays = displays;
+    _area = area.length ? area : nil;
+    _window = window.length ? window : nil;
 }
 
 - (void)draw {
@@ -60,6 +79,9 @@
 }
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
+    // A picked window that has closed since is reported first, so this menu
+    // shows what Go makes of it: Go's answer comes back on this thread.
+    if (OAForgetClosedWindow()) onairEvent(ONAIR_WINDOW_CLOSED, "");
     [menu removeAllItems];
     [self add:menu title:_recording ? @"Stop Recording" : @"Start Recording" action:_recording ? ONAIR_MENU_STOP : ONAIR_MENU_START enabled:YES];
     if (_note) {
@@ -78,22 +100,44 @@
         for (NSString *l in lines) [self add:menu title:l action:0 enabled:NO];
     }
     [menu addItem:[NSMenuItem separatorItem]];
+    [self add:menu title:@"Record" action:0 enabled:NO];
+    for (NSDictionary *display in _displays) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:display[@"title"] action:@selector(pick:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = display[@"id"];
+        item.state = [display[@"picked"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+        item.enabled = _open;
+        [menu addItem:item];
+    }
+    [self add:menu title:@"Select Area…" action:ONAIR_MENU_AREA enabled:_open];
+    if (_area) {
+        [self add:menu title:_area action:0 enabled:NO].state = NSControlStateValueOn;
+        [self add:menu title:@"Whole Display" action:ONAIR_MENU_WHOLE enabled:_open];
+    }
+    [self add:menu title:@"Select Window…" action:ONAIR_MENU_WINDOW enabled:_open];
+    if (_window) [self add:menu title:_window action:0 enabled:NO].state = NSControlStateValueOn;
+    [menu addItem:[NSMenuItem separatorItem]];
     if (_last) [self add:menu title:[NSString stringWithFormat:@"Show “%@”", _last.lastPathComponent] action:ONAIR_MENU_LAST enabled:YES];
     [self add:menu title:@"Open Recordings Folder" action:ONAIR_MENU_FOLDER enabled:YES];
     [menu addItem:[NSMenuItem separatorItem]];
     [self add:menu title:@"Quit On Air" action:ONAIR_MENU_QUIT enabled:YES];
 }
 
-- (void)add:(NSMenu *)menu title:(NSString *)title action:(int)action enabled:(BOOL)enabled {
+- (NSMenuItem *)add:(NSMenu *)menu title:(NSString *)title action:(int)action enabled:(BOOL)enabled {
     NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:@selector(chosen:) keyEquivalent:@""];
     item.target = self;
     item.tag = action;
     item.enabled = enabled;
     [menu addItem:item];
+    return item;
 }
 
 - (void)chosen:(NSMenuItem *)item {
     onairMenu((int)item.tag);
+}
+
+- (void)pick:(NSMenuItem *)item {
+    onairPick((char *)[item.representedObject UTF8String]);
 }
 
 @end
@@ -110,10 +154,49 @@ void onair_run(void) {
     }
 }
 
+// On the main thread now, which is where a menu being opened asks Go, or
+// later on it.
+static void onMain(dispatch_block_t block) {
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), block);
+    }
+}
+
+// Go calls onair_show and onair_choices under its lock, in the order it
+// decides, and each call carries all there is to show. One from the main
+// thread is applied at once, ahead of any from other threads still on their
+// way there, so those are numbered as they are asked for and dropped when a
+// newer one has been applied: an older answer never replaces a newer one.
+static atomic_long showsAsked, choicesAsked;
+static long showsDone, choicesDone; // the newest applied, on the main thread
+
 void onair_show(int recording, const char *last, const char *note) {
+    long asked = atomic_fetch_add(&showsAsked, 1) + 1;
     NSString *l = [NSString stringWithUTF8String:last ?: ""], *n = [NSString stringWithUTF8String:note ?: ""];
-    dispatch_async(dispatch_get_main_queue(), ^{
+    onMain(^{
+        if (asked <= showsDone) return;
+        showsDone = asked;
         [app show:recording != 0 last:l note:n];
+    });
+}
+
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window) {
+    NSMutableArray<NSDictionary *> *list = [NSMutableArray array];
+    for (int i = 0; i < count; i++) {
+        [list addObject:@{
+            @"id" : [NSString stringWithUTF8String:displays[i].id ?: ""],
+            @"title" : [NSString stringWithUTF8String:displays[i].title ?: ""],
+            @"picked" : @(displays[i].picked != 0),
+        }];
+    }
+    NSString *a = [NSString stringWithUTF8String:area ?: ""], *w = [NSString stringWithUTF8String:window ?: ""];
+    long asked = atomic_fetch_add(&choicesAsked, 1) + 1;
+    onMain(^{
+        if (asked <= choicesDone) return;
+        choicesDone = asked;
+        [app choices:open != 0 displays:list area:a window:w];
     });
 }
 

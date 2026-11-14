@@ -44,11 +44,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "On Air can't find your home directory:", err)
 		os.Exit(1)
 	}
-	// Pieces are On Air's own. Joined recordings go to a folder of its own
-	// too, until the hand-over to another folder is wired in.
+	// Pieces and settings are On Air's own. Joined recordings go to a
+	// folder of its own too, until the hand-over to another folder is wired
+	// in.
+	support := filepath.Join(home, "Library", "Application Support", "On Air")
 	app := recorder.New(edge{}, recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true},
-		filepath.Join(home, "Library", "Application Support", "On Air", "spool"),
-		filepath.Join(home, "Movies", "On Air"), time.Now)
+		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app})
 	mac.Run()
 }
@@ -57,12 +58,23 @@ func main() {
 type edge struct{}
 
 func (edge) Start(c recorder.Config) {
-	mac.Start(mac.Config{Rows: c.Rows, FPS: c.FPS, PieceSeconds: c.PieceSeconds, VideoBitrate: c.VideoBitrate, Microphone: c.Microphone})
+	mac.Start(mac.Config{Rows: c.Rows, FPS: c.FPS, PieceSeconds: c.PieceSeconds, VideoBitrate: c.VideoBitrate, Microphone: c.Microphone,
+		Window: c.Target.Window, Display: c.Target.Display, Area: mac.Area(c.Target.Area)})
 }
 func (edge) Stop()                                  { mac.Stop() }
 func (edge) Show(recording bool, last, note string) { mac.Show(recording, last, note) }
+func (edge) SelectArea(display string)              { mac.SelectArea(display) }
+func (edge) SelectWindow()                          { mac.SelectWindow() }
 func (edge) Reveal(path string)                     { mac.Reveal(path) }
 func (edge) Quit()                                  { mac.Quit() }
+
+func (edge) Choices(c recorder.Choices) {
+	var displays []mac.Choice
+	for _, d := range c.Displays {
+		displays = append(displays, mac.Choice{ID: d.ID, Title: d.Title, Picked: d.Picked})
+	}
+	mac.Choices(c.Open, displays, c.Area, c.Window)
+}
 
 // bridge is the recorder, as the Mac reports things to it.
 type bridge struct{ app *recorder.App }
@@ -79,6 +91,12 @@ func (b bridge) Event(code int, message string) {
 		b.app.Event(recorder.Failed, message)
 	case mac.MicrophoneFailed:
 		b.app.Event(recorder.MicrophoneFailed, message)
+	case mac.TargetGone:
+		b.app.Event(recorder.TargetGone, message)
+	case mac.WindowClosed:
+		b.app.Event(recorder.WindowClosed, message)
+	case mac.PickerFailed:
+		b.app.Event(recorder.PickerFailed, message)
 	}
 }
 
@@ -96,8 +114,26 @@ func (b bridge) Menu(action int) {
 		b.app.Menu(recorder.OpenFolder)
 	case mac.MenuQuit:
 		b.app.Menu(recorder.Quit)
+	case mac.MenuArea:
+		b.app.Menu(recorder.SelectArea)
+	case mac.MenuWhole:
+		b.app.Menu(recorder.WholeDisplay)
+	case mac.MenuWindow:
+		b.app.Menu(recorder.SelectWindow)
 	}
 }
+
+func (b bridge) Displays(displays []mac.Display) {
+	var ds []recorder.Display
+	for _, d := range displays {
+		ds = append(ds, recorder.Display(d))
+	}
+	b.app.Displays(ds)
+}
+
+func (b bridge) Pick(id string)                     { b.app.PickDisplay(id) }
+func (b bridge) Area(display string, area mac.Area) { b.app.AreaPicked(display, recorder.Area(area)) }
+func (b bridge) Window(name string)                 { b.app.WindowPicked(name) }
 
 // collector keeps the segments a self-test's writer hands over.
 type collector struct {
@@ -121,8 +157,12 @@ func (c *collector) Segment(opening bool, data []byte) {
 	c.err = c.r.PutPiece(c.n, data)
 }
 
-func (c *collector) Event(int, string) {}
-func (c *collector) Menu(int)          {}
+func (c *collector) Event(int, string)      {}
+func (c *collector) Menu(int)               {}
+func (c *collector) Displays([]mac.Display) {}
+func (c *collector) Pick(string)            {}
+func (c *collector) Area(string, mac.Area)  {}
+func (c *collector) Window(string)          {}
 
 func (c *collector) kept() (int, error) {
 	c.mu.Lock()

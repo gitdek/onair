@@ -86,7 +86,7 @@ One Go app in two layers, and only one of them makes decisions.
 ## Status
 
 - [x] **Founding.** The spec's first cut, the rules for agents, the checks and the gate.
-- [ ] **Milestone one.** Under way. Built: the menu-bar recorder, which records the main display with its sound and the microphone mixed into one track, in pieces that each play on their own, joins them at Stop and recovers them after a kill; and the hand-over's core, proved, which nothing calls yet. To come: the hand-over itself, the disk and length guards, carrying a recording on after a crash, and the hand checks on the owner's Mac.
+- [ ] **Milestone one.** Under way. Built: the menu-bar recorder, which records the display, area or window a person picks, with its sound and the microphone mixed into one track, in pieces that each play on their own, joins them at Stop and recovers them after a kill; and the hand-over's core, proved, which nothing calls yet. To come: the hand-over itself, the disk and length guards, carrying a recording on after a crash, and the hand checks on the owner's Mac.
 - [ ] **Milestone two.**
 - [ ] **Milestone three.**
 

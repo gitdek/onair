@@ -1,7 +1,7 @@
 // The part of On Air that touches macOS: the menu-bar item, the screen and
 // sound capture, and the writer that cuts them into segments. It decides
-// nothing. It reports what happened to Go through the three callbacks below,
-// and Go tells it what to show.
+// nothing. It reports what happened to Go through the callbacks in mac.go,
+// and Go tells it what to show and what to record.
 #ifndef ONAIR_RECORDER_H
 #define ONAIR_RECORDER_H
 
@@ -11,6 +11,9 @@ typedef struct {
     double pieceSeconds; // how long a piece is
     int videoBitrate;    // bits a second
     int microphone;      // 1 to mix the microphone into the display's sound
+    int window;          // 1 to record the picked window
+    const char *display; // otherwise the display to record, by its identifier, or "" for the main one
+    double areaX, areaY, areaWidth, areaHeight; // a part of it, in its points from its top left; no width for all of it
 } onair_config;
 
 // What onairEvent reports.
@@ -19,6 +22,9 @@ enum {
     ONAIR_FINISHED = 2,          // the last segment was handed over; the message says what was left out, if anything
     ONAIR_FAILED = 3,            // capture stopped or never started; the message says why
     ONAIR_MICROPHONE_FAILED = 4, // capture didn't start because of the microphone, and isn't running; the message says why
+    ONAIR_TARGET_GONE = 5,       // capture didn't start because what it was asked to record isn't there, and isn't running
+    ONAIR_WINDOW_CLOSED = 6,     // the picked window closed
+    ONAIR_PICKER_FAILED = 7,     // the window picker didn't open; the message says why
 };
 
 // What onairMenu reports.
@@ -28,11 +34,29 @@ enum {
     ONAIR_MENU_LAST = 3,
     ONAIR_MENU_FOLDER = 4,
     ONAIR_MENU_QUIT = 5,
+    ONAIR_MENU_AREA = 6,   // Select Area…
+    ONAIR_MENU_WHOLE = 7,  // Whole Display
+    ONAIR_MENU_WINDOW = 8, // Select Window…
 };
 
-// Start asks for capture and returns at once. ONAIR_STARTED, ONAIR_FAILED or
-// ONAIR_MICROPHONE_FAILED follows. Segments arrive through onairPiece: kind 0
-// is the opening segment, kind 1 a media segment.
+// A connected display, as onairDisplays reports it.
+typedef struct {
+    const char *id;       // stays the same across launches and reconnections
+    const char *name;     // what macOS calls it
+    double width, height; // in points
+    int main;             // 1 for the display with the menu bar
+} onair_display;
+
+// A display, as the menu offers it.
+typedef struct {
+    const char *id;
+    const char *title;
+    int picked; // 1 for the one that is marked
+} onair_choice;
+
+// Start asks for capture and returns at once. ONAIR_STARTED, ONAIR_FAILED,
+// ONAIR_MICROPHONE_FAILED or ONAIR_TARGET_GONE follows. Segments arrive
+// through onairPiece: kind 0 is the opening segment, kind 1 a media segment.
 void onair_start(onair_config cfg);
 // Stop ends capture. ONAIR_FINISHED follows the last segment.
 void onair_stop(void);
@@ -80,10 +104,26 @@ int onair_probe(const char *path, onair_movie *movie, char **error);
 // message the caller frees.
 int onair_sound(const char *path, float **samples, long *frames, double *start, char **error);
 
+// FrameSize is the picture's size in pixels for content of a size in points
+// at a scale, brought down to rows at most, with even sides.
+void onair_frame_size(double width, double height, double scale, int rows, int *wide, int *high);
+
 // Run shows the menu-bar item and runs the app. It doesn't return.
+// onairDisplays reports the connected displays when it starts and whenever
+// they change.
 void onair_run(void);
 // Show sets what the menu-bar item says. Any thread may call it.
 void onair_show(int recording, const char *last, const char *note);
+// Choices sets the part of the menu that picks what to record: whether a
+// choice can be made, the displays, and what names the picked area and the
+// picked window, if any. Any thread may call it.
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window);
+// SelectArea dims a display and lets a person drag out an area of it.
+// onairArea follows, unless they cancel.
+void onair_select_area(const char *display);
+// SelectWindow shows the system's picker for one window, which the edge
+// keeps. onairWindow follows, unless they cancel.
+void onair_select_window(void);
 // Reveal shows a file or a folder in the Finder.
 void onair_reveal(const char *path);
 // Quit ends the app.

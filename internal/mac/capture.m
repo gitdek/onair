@@ -1,19 +1,21 @@
 #import "recorder.h"
 #import "writer.h"
 #import "mixer.h"
+#import "choose.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import "_cgo_export.h"
 
-// OACapture takes the main display's picture and sound from ScreenCaptureKit,
-// with the microphone when it is asked for, and gives them to the writer: the
-// picture as it comes, and the two sounds mixed into the one sound track the
-// writer takes. It keeps the picture moving when the screen is still: a
-// segment ends on a key frame, so with no frames no piece would close, and a
-// kill would cost all the sound since the last one.
+// OACapture takes picture and sound from ScreenCaptureKit, of the display, the
+// area of one or the window Go asks for, with the microphone when it is asked
+// for, and gives them to the writer: the picture as it comes, and the two
+// sounds mixed into the one sound track the writer takes. It keeps the
+// picture moving when the screen is still: a segment ends on a key frame, so
+// with no frames no piece would close, and a kill would cost all the sound
+// since the last one.
 @interface OACapture : NSObject <SCStreamOutput, SCStreamDelegate>
-- (void)start:(onair_config)cfg;
+- (void)start:(onair_config)cfg display:(NSString *)display window:(SCContentFilter *)filter id:(CGWindowID)window;
 - (void)stop;
 @end
 
@@ -32,6 +34,7 @@ static void report(int code, NSString *text) {
     CVPixelBufferRef _last; // the newest whole frame
     CMTime _lastWritten;    // when a frame was last written, on the stream's clock
     CMTime _clockOffset;    // the stream's clock minus the host's
+    BOOL _windowed;         // recording a window
     BOOL _stopping, _ended;
 }
 
@@ -47,8 +50,21 @@ static void report(int code, NSString *text) {
     if (_last) CVPixelBufferRelease(_last);
 }
 
-- (void)start:(onair_config)cfg {
+- (void)start:(onair_config)cfg display:(NSString *)display window:(SCContentFilter *)filter id:(CGWindowID)window {
     _cfg = cfg;
+    if (cfg.window) {
+        dispatch_async(_queue, ^{
+            if (!filter || !OAWindowOpen(window)) {
+                [self end:ONAIR_TARGET_GONE why:@"the picked window is gone."];
+                return;
+            }
+            self->_windowed = YES;
+            [self microphoneThen:^{
+                [self begin:filter size:filter.contentRect.size scale:filter.pointPixelScale area:CGRectNull];
+            }];
+        });
+        return;
+    }
     [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:YES completionHandler:^(SCShareableContent *content, NSError *error) {
         dispatch_async(self->_queue, ^{
             if (error || content.displays.count == 0) {
@@ -57,22 +73,46 @@ static void report(int code, NSString *text) {
                 [self end:[NSString stringWithFormat:@"On Air can't see the screen: %@. Allow it in System Settings, Privacy & Security, Screen & System Audio Recording, then start again.", error.localizedDescription ?: @"no display was found"]];
                 return;
             }
-            SCDisplay *display = content.displays.firstObject;
+            SCDisplay *chosen = nil;
             for (SCDisplay *d in content.displays) {
-                if (d.displayID == CGMainDisplayID()) display = d;
+                if (display.length ? [OADisplayID(d.displayID) isEqualToString:display] : d.displayID == CGMainDisplayID()) chosen = d;
             }
-            if (!self->_cfg.microphone) {
-                [self begin:display];
+            if (!chosen && display.length) {
+                [self end:ONAIR_TARGET_GONE why:@"the picked display isn't connected."];
                 return;
             }
-            [self microphone:^(NSString *why) {
-                if (why) {
-                    [self end:ONAIR_MICROPHONE_FAILED why:why];
+            if (!chosen) chosen = content.displays.firstObject;
+            CGRect area = CGRectNull;
+            if (self->_cfg.areaWidth > 0 && self->_cfg.areaHeight > 0) {
+                area = CGRectMake(self->_cfg.areaX, self->_cfg.areaY, self->_cfg.areaWidth, self->_cfg.areaHeight);
+                CGRect bounds = CGRectInset(CGRectMake(0, 0, chosen.width, chosen.height), -0.5, -0.5);
+                if (!CGRectContainsRect(bounds, area)) {
+                    [self end:ONAIR_TARGET_GONE why:@"the picked area isn't on the display."];
                     return;
                 }
-                [self begin:display];
+            }
+            SCContentFilter *shown = [[SCContentFilter alloc] initWithDisplay:chosen excludingWindows:@[]];
+            CGSize size = CGRectIsNull(area) ? CGSizeMake(chosen.width, chosen.height) : area.size;
+            [self microphoneThen:^{
+                [self begin:shown size:size scale:shown.pointPixelScale area:area];
             }];
         });
+    }];
+}
+
+// MicrophoneThen goes on once the microphone can be recorded, when it is
+// asked for, and reports why when it can't.
+- (void)microphoneThen:(dispatch_block_t)next {
+    if (!_cfg.microphone) {
+        next();
+        return;
+    }
+    [self microphone:^(NSString *why) {
+        if (why) {
+            [self end:ONAIR_MICROPHONE_FAILED why:why];
+            return;
+        }
+        next();
     }];
 }
 
@@ -96,23 +136,22 @@ static void report(int code, NSString *text) {
     return [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio] ? nil : @"no microphone was found.";
 }
 
-- (void)begin:(SCDisplay *)display {
+// Begin captures what filter shows, of a size in points: all of it, or an
+// area of a display.
+- (void)begin:(SCContentFilter *)filter size:(CGSize)points scale:(double)scale area:(CGRect)area {
     if (_ended) return;
-    SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
-    // The display's size in pixels, brought down to the rows asked for, with
-    // even sides as the encoder wants.
-    double scale = filter.pointPixelScale > 0 ? filter.pointPixelScale : 1;
-    double width = display.width * scale, height = display.height * scale;
-    if (_cfg.rows > 0 && height > _cfg.rows) {
-        width = width * _cfg.rows / height;
-        height = _cfg.rows;
-    }
-    _width = ((int)width) & ~1;
-    _height = ((int)height) & ~1;
+    onair_frame_size(points.width, points.height, scale, _cfg.rows, &_width, &_height);
 
     SCStreamConfiguration *c = [[SCStreamConfiguration alloc] init];
     c.width = _width;
     c.height = _height;
+    if (!CGRectIsNull(area)) c.sourceRect = area;
+    if (_windowed) {
+        // The picture's size can't change mid-recording. A window that is
+        // resized is scaled to fit it, keeping its shape.
+        c.scalesToFit = YES;
+        c.ignoreShadowsSingleWindow = YES;
+    }
     c.minimumFrameInterval = CMTimeMake(1, _cfg.fps > 0 ? _cfg.fps : 15);
     c.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
     c.showsCursor = YES;
@@ -240,6 +279,15 @@ static void report(int code, NSString *text) {
     });
 }
 
+// Every window being recorded has gone. For a window's recording, that is
+// the window closing, and Go decides what follows.
+- (void)streamDidBecomeInactive:(SCStream *)stream {
+    dispatch_async(_queue, ^{
+        if (self->_ended || self->_stopping || !self->_windowed) return;
+        report(ONAIR_WINDOW_CLOSED, @"");
+    });
+}
+
 // The stream stopped by itself: the display went away, the permission was
 // taken back, or capture failed.
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
@@ -313,12 +361,29 @@ static void report(int code, NSString *text) {
 
 @end
 
+void onair_frame_size(double width, double height, double scale, int rows, int *wide, int *high) {
+    if (scale <= 0) scale = 1;
+    double w = width * scale, h = height * scale;
+    if (rows > 0 && h > rows) {
+        w = w * rows / h;
+        h = rows;
+    }
+    // Even sides, as the encoder wants, and never none.
+    *wide = MAX(((int)w) & ~1, 2);
+    *high = MAX(((int)h) & ~1, 2);
+}
+
 static OACapture *current;
 
 void onair_start(onair_config cfg) {
+    // The display's name is Go's, and gone once this returns.
+    NSString *display = [NSString stringWithUTF8String:cfg.display ?: ""];
+    cfg.display = NULL;
     dispatch_async(dispatch_get_main_queue(), ^{
+        CGWindowID window = 0;
+        SCContentFilter *filter = cfg.window ? OAPickedWindow(&window) : nil;
         current = [[OACapture alloc] init];
-        [current start:cfg];
+        [current start:cfg display:display window:filter id:window];
     });
 }
 
