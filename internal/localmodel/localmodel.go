@@ -4,9 +4,10 @@
 // and has no network port. It runs from the Python environment that
 // tools/setup-models makes, uses the Hugging Face cache offline, and never
 // downloads anything. On Air starts it when it is first asked, starts it
-// again if it dies, and gives up after three starts in a row fail, until
-// it is closed and chosen again. It decides nothing: which questions to ask
-// is here, and what to make of the answers is internal/live's.
+// again if it dies, and gives up after three failures, answers in between
+// or not, until it is closed and chosen again. One left unasked for half
+// an hour is stopped. It decides nothing: which questions to ask is here,
+// and what to make of the answers is internal/live's.
 package localmodel
 
 import (
@@ -31,7 +32,7 @@ var helper string
 
 // Limits on the helper.
 const (
-	startsAllowed = 3                // starts that may fail in a row before it gives up
+	startsAllowed = 3                // helpers that may fail to start, load or keep running before it gives up
 	loadTimeout   = 2 * time.Minute  // for the model to load
 	maxLine       = 1 << 20          // bytes of one line from the helper
 	keptErrors    = 2048             // bytes of its standard error kept, to say why it stopped
@@ -48,12 +49,13 @@ type Model struct {
 
 	mu      sync.Mutex
 	proc    *helperProcess
-	failed  int    // starts that failed in a row
+	failed  int    // helpers that failed since Close
 	why     string // why the last start failed
 	gaveUp  bool
 	asked   int64
 	lastUse time.Time
 	quiet   time.Duration // how long it may go unasked: idleQuit, or less in a test
+	idle    *time.Timer   // stops a helper left unasked for quiet
 }
 
 // New returns the model behind a helper run by python, the Python of the
@@ -128,6 +130,7 @@ func (m *Model) Judge(ctx context.Context, r live.Round) (live.Verdict, error) {
 	m.asked++
 	id := m.asked
 	m.lastUse = time.Now()
+	m.watch()
 	m.mu.Unlock()
 	request, err := json.Marshal(map[string]any{"id": id, "state": r.Text, "questions": questions(r)})
 	if err != nil {
@@ -156,20 +159,17 @@ func (m *Model) Judge(ctx context.Context, r live.Round) (live.Verdict, error) {
 			if a.Error != "" {
 				return live.Verdict{}, fmt.Errorf("the local model couldn't answer: %s", a.Error)
 			}
-			v, err := verdict(a.Answers, len(r.Records) > 0)
-			if err == nil {
-				m.mu.Lock()
-				m.failed, m.why = 0, ""
-				m.mu.Unlock()
-			}
-			return v, err
+			// An answer doesn't start the count of failures over: a
+			// helper that answers and then dies, again and again, would
+			// otherwise load the model afresh every round.
+			return verdict(a.Answers, len(r.Records) > 0)
 		}
 	}
 }
 
 // running is the helper, started if it isn't running. It starts it once
-// more each time one dies, and not after startsAllowed starts in a row
-// failed.
+// more each time one dies, and not after startsAllowed have failed since
+// Close.
 func (m *Model) running() (*helperProcess, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -190,7 +190,36 @@ func (m *Model) running() (*helperProcess, error) {
 		return nil, fmt.Errorf("the local model couldn't be started: %w", err)
 	}
 	m.proc, m.lastUse = p, time.Now()
+	m.watch()
 	return p, nil
+}
+
+// watch sets the timer that stops a helper once it has gone unasked for
+// m.quiet, so it goes by itself after a call, with no question to come.
+// The lock is held.
+func (m *Model) watch() {
+	if m.idle == nil {
+		m.idle = time.AfterFunc(m.quiet, m.stopIdle)
+		return
+	}
+	m.idle.Reset(m.quiet)
+}
+
+// stopIdle stops the helper if it has gone unasked for m.quiet, or looks
+// again when it would have. Stopping it isn't a failure: the next question
+// starts another.
+func (m *Model) stopIdle() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.proc == nil {
+		return
+	}
+	if left := m.quiet - time.Since(m.lastUse); left > 0 {
+		m.idle.Reset(left)
+		return
+	}
+	m.proc.stop()
+	m.proc = nil
 }
 
 // fail counts a helper that couldn't start, didn't load or stopped, until
@@ -221,6 +250,9 @@ func (m *Model) Close() {
 	if m.proc != nil {
 		m.proc.stop()
 		m.proc = nil
+	}
+	if m.idle != nil {
+		m.idle.Stop()
 	}
 	m.failed, m.why, m.gaveUp = 0, "", false
 }
