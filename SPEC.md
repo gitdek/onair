@@ -48,7 +48,8 @@ The mixer waits for whichever source is behind, half a second at most, then carr
   - A hard kill: On Air was killed with `SIGKILL` 33 seconds into a recording. At the next launch it joined the 7 whole pieces into a recovered file of 28.6 seconds that starts at time 0, losing only the piece that was open.
   - Recording a single window while another window covered it.
   - Recording an area of a display.
-- **Not yet checked by hand:** a 60-minute call, for the picture and sound staying in step over time and the file's size; a microphone unplugged mid-call; the Mac going to sleep, and logging out, mid-recording; the picked display unplugged; and a microphone whose clock drifts from the display's, the known weakness of the mixer's realignment. Nor has asking for the microphone at Start, going ahead when it is refused, or the note when its sound doesn't come, which came after that build: [#7](https://github.com/gitdek/onair/issues/7) lists their checks. None of the milestone's hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
+- **Checked by hand later the same day,** with [#7](https://github.com/gitdek/onair/issues/7)'s change: macOS asked for the microphone before the first recording started, and that recording had the voice.
+- **Not yet checked by hand:** a 60-minute call, for the picture and sound staying in step over time and the file's size; a microphone unplugged mid-call; the Mac going to sleep, and logging out, mid-recording; the picked display unplugged; and a microphone whose clock drifts from the display's, the known weakness of the mixer's realignment. Nor has going ahead when the microphone is refused, or the note when its sound doesn't come. None of the milestone's hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
 
 ### What it doesn't do yet
 
