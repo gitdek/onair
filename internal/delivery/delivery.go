@@ -94,6 +94,9 @@ type record struct {
 	// HandedOver is when the folder was found to hold the recording, which
 	// starts the days On Air keeps its own copy.
 	HandedOver time.Time `json:"handedOver,omitzero"`
+	// Leftover says a copy may be left under the hidden name, now that the
+	// folder holds the recording. It goes before anything else is done.
+	Leftover bool `json:"leftover,omitempty"`
 }
 
 type result struct {
@@ -197,7 +200,7 @@ func (d *Delivery) Done() bool {
 func (d *Delivery) Run(folder string, now func() time.Time) Report {
 	retry := d.kept.Core.Record.Outcome == handover.Failed
 	retryRemoval := d.kept.Core.Record.Cleanup == handover.CleanupFailed
-	handed := false
+	handed, tidied := false, false
 	d.removal = nil
 	stop := func(err error) Report { return d.report(handed, err) }
 	if folder == "" {
@@ -222,17 +225,25 @@ func (d *Delivery) Run(folder string, now func() time.Time) Report {
 			if delivered {
 				// The days start now, however long the copy took.
 				next.HandedOver, handed = now(), true
+				// Found the same rather than given its name, the recording
+				// may leave a copy under the hidden name.
+				next.Leftover = rec.Phase != handover.Publish
 			}
 			if err := d.keep(next); err != nil {
 				return stop(err)
-			}
-			if delivered {
-				d.letGoOfLeftover()
 			}
 			if rec.Phase == handover.InspectTaken && reply == handover.Absent {
 				return stop(errNameFreed)
 			}
 			continue
+		case d.kept.Leftover && !tidied:
+			// Once a run, until it is gone, so neither a kill nor a removal
+			// that fails leaves it in the folder for good.
+			tidied = true
+			if !d.letGoOfLeftover() {
+				continue
+			}
+			next.Leftover = false
 		case rec.Outcome == handover.NotStarted:
 			if _, err := os.Lstat(d.Spool()); err != nil {
 				return stop(fmt.Errorf("On Air's own copy isn't there to hand over: %w", err))
@@ -601,19 +612,33 @@ func (d *Delivery) removeOwn(path string) (handover.Reply, error) {
 }
 
 // letGoOfLeftover removes a copy the hand-over left under its hidden name
-// once the folder holds the recording. That happens only when a file the
-// same as the recording took its name while the copy was made. The core
-// never asks for it, and nothing else uses it.
-func (d *Delivery) letGoOfLeftover() {
+// once the folder holds the recording, and says whether none is left. That
+// happens only when a file the same as the recording took its name while
+// the copy was made. The core never asks for it, and nothing else uses it.
+// Anything but a file under the hidden name isn't a copy, and stays.
+func (d *Delivery) letGoOfLeftover() bool {
 	hidden, err := d.path(handover.HiddenTarget)
 	if err != nil {
-		return
+		return true
 	}
-	if info, err := os.Lstat(hidden); err == nil && info.Mode().IsRegular() {
-		if os.Remove(hidden) == nil {
-			d.syncFolder()
-		}
+	// A folder that isn't there, such as a disk unplugged, may come back
+	// with the copy in it.
+	if reply, err := d.folderThere(); reply != handover.NoReply || err != nil {
+		return false
 	}
+	info, err := os.Lstat(hidden)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return true
+	case err != nil:
+		return false
+	case !info.Mode().IsRegular():
+		return true
+	}
+	if err := os.Remove(hidden); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	return d.syncFolder() == nil
 }
 
 // hiddenAbsent says whether the attempt that failed left nothing under the
