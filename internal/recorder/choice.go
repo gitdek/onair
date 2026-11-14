@@ -3,6 +3,7 @@ package recorder
 import (
 	"fmt"
 	"math"
+	"path/filepath"
 	"strings"
 
 	"github.com/gitdek/onair/internal/settings"
@@ -28,12 +29,14 @@ type Target struct {
 	Area    Area // zero for the whole display
 }
 
-// Choices is the part of the menu that picks what to record.
+// Choices is the part of the menu that picks what to record, and where
+// recordings go.
 type Choices struct {
-	Open     bool     // whether a choice can be made: not while recording
+	Open     bool     // whether what to record can be picked: not while recording
 	Displays []Choice // the connected displays, with the one Start records picked
 	Area     string   // names the picked area, when there is one
 	Window   string   // names the picked window, when there is one
+	Folder   string   // names the folder recordings go to
 }
 
 // Choice is a display in the menu.
@@ -166,11 +169,11 @@ func (a *App) canChoose() bool {
 }
 
 // remember keeps a choice of display and area, in memory and in the
-// settings file. The lock is held.
+// settings file, beside where recordings go. The lock is held.
 func (a *App) remember(p picked) {
 	a.picked, a.note = p, ""
 	if a.settings != "" {
-		if err := settings.Save(a.settings, p); err != nil {
+		if err := settings.Save(a.settings, kept{picked: p, Folder: a.folder}); err != nil {
 			a.note = "On Air records this until it quits, but couldn't remember it: " + err.Error()
 		}
 	}
@@ -262,9 +265,16 @@ func fits(r Area, d Display) bool {
 		r.X+r.Width <= d.Width+slack && r.Y+r.Height <= d.Height+slack
 }
 
-// choices is what the menu offers to record. The lock is held.
+// ownFolder is what the menu calls On Air's own folder.
+const ownFolder = "On Air's own folder, until one is picked"
+
+// choices is what the menu offers to record, and where recordings go. The
+// lock is held.
 func (a *App) choices() Choices {
-	c := Choices{Open: a.state == idle}
+	c := Choices{Open: a.state == idle, Folder: ownFolder}
+	if a.folder != "" {
+		c.Folder = filepath.Base(a.folder)
+	}
 	t, _ := a.displayTarget()
 	for _, d := range a.displays {
 		on := a.window == "" && (t.Display == d.ID || t.Display == "" && d.Main)

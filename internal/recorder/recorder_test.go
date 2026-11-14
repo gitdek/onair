@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ type fakeEdge struct {
 	areas    []string // displays an area was asked for on
 	windows  int      // times a window was asked for
 	asks     int      // times the microphone was asked for
+	folders  []string // where the folder picker opened, each time it was asked for
 }
 
 type shown struct {
@@ -61,6 +63,11 @@ func (e *fakeEdge) SelectArea(display string) {
 	e.mu.Unlock()
 }
 func (e *fakeEdge) SelectWindow() { e.mu.Lock(); e.windows++; e.mu.Unlock() }
+func (e *fakeEdge) ChooseFolder(current string) {
+	e.mu.Lock()
+	e.folders = append(e.folders, current)
+	e.mu.Unlock()
+}
 func (e *fakeEdge) latest() shown {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -126,12 +133,13 @@ func (f *fixture) newApp() *App {
 	return New(f.edge, f.config, f.spool, f.out, f.settings, func() time.Time { f.at = f.at.Add(time.Second); return f.at })
 }
 
-// idle waits for the join that follows a recording's end.
+// idle waits for the join that follows a recording's end, and for the
+// hand-overs under way.
 func (f *fixture) idle(app *App) {
 	f.t.Helper()
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 10000; i++ {
 		app.mu.Lock()
-		done := app.state == idle
+		done := app.state == idle && app.handing == 0
 		app.mu.Unlock()
 		if done {
 			return
@@ -139,6 +147,23 @@ func (f *fixture) idle(app *App) {
 		time.Sleep(time.Millisecond)
 	}
 	f.t.Fatal("the app never came back to idle")
+}
+
+// launch is a fresh process over the same directories, launched, once
+// what its launch started is done.
+func (f *fixture) launch() *App {
+	f.t.Helper()
+	app := f.newApp()
+	app.Launched()
+	f.idle(app)
+	return app
+}
+
+// handed is what the menu says once the last recording was handed over,
+// after what it says of the recording: where it went.
+func (f *fixture) handed(note string) string {
+	f.t.Helper()
+	return join(note, fmt.Sprintf("Handed “%s” to “%s”.", filepath.Base(f.edge.latest().last), filepath.Base(f.out)))
 }
 
 func (f *fixture) files() []string {
@@ -197,11 +222,12 @@ func TestARecordingIsJoinedWhenItStops(t *testing.T) {
 	if got, _ := os.ReadFile(path); string(got) != "OPEN|one|two|three|" {
 		t.Fatalf("the recording holds %q", got)
 	}
-	if s := f.edge.latest(); s.recording || s.last != path || s.note != "" {
+	if s := f.edge.latest(); s.recording || s.last != path || s.note != "Handed “2026-11-13 18.30.01 On Air.mp4” to “recordings”." {
 		t.Fatalf("after stopping the dot shows %+v", s)
 	}
-	// Joined, so it isn't taken for one that was cut short.
-	f.newApp().Launched()
+	// Joined and handed over, so it isn't taken for one that was cut short,
+	// nor handed over again.
+	f.launch()
 	if names := f.files(); len(names) != 1 {
 		t.Fatalf("a finished recording was recovered again: %v", names)
 	}
@@ -248,8 +274,7 @@ func TestAKilledRecordingIsRecoveredAtTheNextLaunch(t *testing.T) {
 	if names := f.files(); len(names) != 0 {
 		t.Fatalf("something was joined before the recording ended: %v", names)
 	}
-	again := f.newApp()
-	again.Launched()
+	f.launch()
 	names := f.files()
 	if len(names) != 1 || names[0] != "2026-11-13 18.30.01 On Air (recovered).mp4" {
 		t.Fatalf("recovered: %v", names)
@@ -258,13 +283,16 @@ func TestAKilledRecordingIsRecoveredAtTheNextLaunch(t *testing.T) {
 	if got, _ := os.ReadFile(path); string(got) != "OPEN|one|two|" {
 		t.Fatalf("the recovered recording holds %q", got)
 	}
-	if s := f.edge.latest(); s.recording || s.last != path || s.note != "Recovered a recording that was cut short: 2 pieces, about 8s." {
+	// Handed over as any other recording is.
+	if s := f.edge.latest(); s.recording || s.last != path || s.note != f.handed("Recovered a recording that was cut short: 2 pieces, about 8s.") {
 		t.Fatalf("after recovery the dot shows %+v", s)
 	}
-	if left, _ := os.ReadDir(rec); len(left) != 5 {
-		t.Fatalf("recovery changed the pieces: %v", left)
+	for name, want := range map[string]string{"piece-000001.mp4": "OPEN|one|", "piece-000002.mp4": "OPEN|two|", ".piece-000003.mp4.part": "OPEN|thr"} {
+		if got, err := os.ReadFile(filepath.Join(rec, name)); err != nil || string(got) != want {
+			t.Fatalf("recovery changed %s: %q, %v", name, got, err)
+		}
 	}
-	f.newApp().Launched()
+	f.launch()
 	if names := f.files(); len(names) != 1 {
 		t.Fatalf("a recording was recovered twice: %v", names)
 	}
@@ -397,7 +425,7 @@ func TestEveryRecoveryIsSaid(t *testing.T) {
 	}
 	// A newer one, killed.
 	f.record(f.app, "one|")
-	f.newApp().Launched()
+	f.launch()
 	names := f.files()
 	if len(names) != 1 || names[0] != "2026-11-13 18.30.01 On Air (recovered).mp4" {
 		t.Fatalf("recovered: %v", names)
@@ -412,15 +440,16 @@ func TestEveryRecoveryIsSaid(t *testing.T) {
 func TestAFailedJoinLeavesThePieces(t *testing.T) {
 	f := newFixture(t)
 	f.record(f.app, "one|")
-	// Something is where the recording's folder should be.
-	if err := os.WriteFile(f.out, []byte("in the way"), 0o644); err != nil {
+	// A second piece that isn't this recording's own can't be joined.
+	dirs, _ := os.ReadDir(f.spool)
+	rec := filepath.Join(f.spool, dirs[0].Name())
+	bad := filepath.Join(rec, "piece-000002.mp4")
+	if err := os.WriteFile(bad, []byte("X|two|"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	f.app.Menu(Stop)
 	f.app.Event(Finished, "")
 	f.idle(f.app)
-	dirs, _ := os.ReadDir(f.spool)
-	rec := filepath.Join(f.spool, dirs[0].Name())
 	// The menu says where the pieces are, and Show opens their folder.
 	s := f.edge.latest()
 	if s.recording || s.last != rec || !strings.Contains(s.note, "safe in pieces in "+rec+",") {
@@ -433,11 +462,18 @@ func TestAFailedJoinLeavesThePieces(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(rec, "piece-000001.mp4")); string(got) != "OPEN|one|" {
 		t.Fatalf("the piece is %q", got)
 	}
-	// With the way clear, the next launch joins it.
-	if err := os.Remove(f.out); err != nil {
+	// Nothing was handed over, and nothing waits to be.
+	if names := f.files(); len(names) != 0 {
+		t.Fatalf("recordings: %v", names)
+	}
+	if _, err := os.Stat(filepath.Join(rec, "handover.json")); !os.IsNotExist(err) {
+		t.Fatalf("a hand-over was kept for a recording that wasn't joined: %v", err)
+	}
+	// With the way clear, the next launch joins it, and hands it over.
+	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
-	f.newApp().Launched()
+	f.launch()
 	if names := f.files(); len(names) != 1 || !strings.Contains(names[0], "(recovered)") {
 		t.Fatalf("recordings: %v", names)
 	}
@@ -494,7 +530,7 @@ func TestTheDisplayIsRecordedWhenTheMicrophoneCantBe(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("recordings: %v", names)
 	}
-	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != "The microphone wasn't recorded: no microphone was found." {
+	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != f.handed("The microphone wasn't recorded: no microphone was found.") {
 		t.Fatalf("after stopping the dot shows %+v", s)
 	}
 	// The next recording asks for the microphone again.
@@ -562,7 +598,7 @@ func TestARecordingWithoutTheMicrophoneThatStopsByItselfSaysBoth(t *testing.T) {
 	f.app.Event(Failed, "capture stopped: the display went away.")
 	f.idle(f.app)
 	s := f.edge.latest()
-	if !strings.Contains(s.note, "the display went away") || !strings.HasSuffix(s.note, "The microphone wasn't recorded: no microphone was found.") {
+	if !strings.Contains(s.note, "the display went away") || !strings.HasSuffix(s.note, f.handed("The microphone wasn't recorded: no microphone was found.")) {
 		t.Fatalf("the dot shows %+v", s)
 	}
 }
@@ -691,7 +727,7 @@ func TestARefusedMicrophoneIsSaidWithHowToAllowIt(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("recordings: %v", names)
 	}
-	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != "The microphone wasn't recorded: "+refused {
+	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != f.handed("The microphone wasn't recorded: "+refused) {
 		t.Fatalf("after stopping the dot shows %+v", s)
 	}
 	// Allowed since, the next recording has it.
@@ -751,7 +787,7 @@ func TestTheMenuSaysWhenTheMicrophoneIsntHeard(t *testing.T) {
 	f.app.Event(Finished, "")
 	f.idle(f.app)
 	// It was heard in the end, so nothing is said of it once saved.
-	if s := f.edge.latest(); s.recording || s.last == "" || s.note != "" {
+	if s := f.edge.latest(); s.recording || s.last == "" || s.note != f.handed("") {
 		t.Fatalf("after stopping the dot shows %+v", s)
 	}
 	// Said with what else the menu says while recording.
@@ -784,7 +820,7 @@ func TestAMicrophoneNeverHeardIsSaidOnceSaved(t *testing.T) {
 	}
 	f.app.Event(Finished, "")
 	f.idle(f.app)
-	saved := "The microphone wasn't heard: nothing came from it."
+	saved := f.handed("The microphone wasn't heard: nothing came from it.")
 	if s := f.edge.latest(); s.recording || s.last == "" || s.note != saved {
 		t.Fatalf("after stopping the dot shows %+v", s)
 	}

@@ -42,6 +42,7 @@ enum {
     ONAIR_MENU_AREA = 6,   // Select Area…
     ONAIR_MENU_WHOLE = 7,  // Whole Display
     ONAIR_MENU_WINDOW = 8, // Select Window…
+    ONAIR_MENU_CHOOSE = 9, // Choose Folder…
 };
 
 // A connected display, as onairDisplays reports it.
@@ -124,16 +125,20 @@ void onair_frame_size(double width, double height, double scale, int rows, int *
 void onair_run(void);
 // Show sets what the menu-bar item says. Any thread may call it.
 void onair_show(int recording, const char *last, const char *note);
-// Choices sets the part of the menu that picks what to record: whether a
-// choice can be made, the displays, and what names the picked area and the
-// picked window, if any. Any thread may call it.
-void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window);
+// Choices sets the part of the menu that picks what to record, and where
+// recordings go: whether what to record can be picked, the displays, what
+// names the picked area and the picked window, if any, and what names the
+// folder recordings go to. Any thread may call it.
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder);
 // SelectArea dims a display and lets a person drag out an area of it.
 // onairArea follows, unless they cancel.
 void onair_select_area(const char *display);
 // SelectWindow shows the system's picker for one window, which the edge
 // keeps. onairWindow follows, unless they cancel.
 void onair_select_window(void);
+// ChooseFolder shows the system's folder picker, folders only, opened on
+// current. onairFolder follows with the folder picked, unless they cancel.
+void onair_choose_folder(const char *current);
 // Reveal shows a file or a folder in the Finder.
 void onair_reveal(const char *path);
 // Quit ends the app.

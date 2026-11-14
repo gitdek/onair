@@ -1,5 +1,6 @@
 // What the menu needs to pick what to record: the connected displays, an
-// area of one, or a window picked with the system's picker.
+// area of one, or a window picked with the system's picker. And to pick
+// where recordings go, with the system's folder picker.
 #import <AppKit/AppKit.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 

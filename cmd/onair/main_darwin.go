@@ -44,13 +44,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "On Air can't find your home directory:", err)
 		os.Exit(1)
 	}
-	// Pieces and settings are On Air's own. Joined recordings go to a
-	// folder of its own too, until the hand-over to another folder is wired
-	// in.
+	// Pieces, joined recordings until their three days are up, and settings
+	// are On Air's own. Recordings are handed to the folder picked from the
+	// menu, and to a folder of On Air's own until one is.
 	support := filepath.Join(home, "Library", "Application Support", "On Air")
 	app := recorder.New(edge{}, recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app})
+	// On Air's own copy of a recording goes three days after the hand-over,
+	// whether or not On Air was quit in between.
+	go func() {
+		for range time.Tick(time.Hour) {
+			app.Tidy()
+		}
+	}()
 	mac.Run()
 }
 
@@ -66,6 +73,7 @@ func (edge) Stop()                                  { mac.Stop() }
 func (edge) Show(recording bool, last, note string) { mac.Show(recording, last, note) }
 func (edge) SelectArea(display string)              { mac.SelectArea(display) }
 func (edge) SelectWindow()                          { mac.SelectWindow() }
+func (edge) ChooseFolder(current string)            { mac.ChooseFolder(current) }
 func (edge) Reveal(path string)                     { mac.Reveal(path) }
 func (edge) Quit()                                  { mac.Quit() }
 
@@ -74,7 +82,7 @@ func (edge) Choices(c recorder.Choices) {
 	for _, d := range c.Displays {
 		displays = append(displays, mac.Choice{ID: d.ID, Title: d.Title, Picked: d.Picked})
 	}
-	mac.Choices(c.Open, displays, c.Area, c.Window)
+	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder)
 }
 
 // bridge is the recorder, as the Mac reports things to it.
@@ -129,6 +137,8 @@ func (b bridge) Menu(action int) {
 		b.app.Menu(recorder.WholeDisplay)
 	case mac.MenuWindow:
 		b.app.Menu(recorder.SelectWindow)
+	case mac.MenuChoose:
+		b.app.Menu(recorder.ChooseFolder)
 	}
 }
 
@@ -143,6 +153,7 @@ func (b bridge) Displays(displays []mac.Display) {
 func (b bridge) Pick(id string)                     { b.app.PickDisplay(id) }
 func (b bridge) Area(display string, area mac.Area) { b.app.AreaPicked(display, recorder.Area(area)) }
 func (b bridge) Window(name string)                 { b.app.WindowPicked(name) }
+func (b bridge) Folder(path string)                 { b.app.FolderChosen(path) }
 
 // collector keeps the segments a self-test's writer hands over.
 type collector struct {
@@ -172,6 +183,7 @@ func (c *collector) Displays([]mac.Display) {}
 func (c *collector) Pick(string)            {}
 func (c *collector) Area(string, mac.Area)  {}
 func (c *collector) Window(string)          {}
+func (c *collector) Folder(string)          {}
 
 func (c *collector) kept() (int, error) {
 	c.mu.Lock()
