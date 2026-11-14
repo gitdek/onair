@@ -523,6 +523,33 @@ func TestANameTakenDuringTheHandOverIsLeftAlone(t *testing.T) {
 	}
 }
 
+// The copy left under the hidden name, when a file the same as the
+// recording took its name while the copy was made, goes even when a kill
+// comes between the hand-over being kept and the copy going.
+func TestALeftoverCopyGoesEvenAfterAKill(t *testing.T) {
+	p := newPlace(t)
+	killed := false
+	d, err := p.prepare(func(point string) error {
+		switch {
+		case point == "copied":
+			p.write(p.final(), p.movie)
+		case point == "kept" && !killed:
+			if k, ok, _ := Load(p.spool); ok && k.Delivered() {
+				killed = true
+				return errKilled
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := d.Run(p.folder, at(start)); !killed || !r.Delivered || !exists(p.hidden()) {
+		t.Fatalf("the kill didn't come once the hand-over was kept: %+v", r)
+	}
+	p.delivered(p.run(nil, start.Add(time.Hour)))
+}
+
 // A file that takes the recording's name, then goes before it is compared,
 // leaves the core where its model never goes: it asks for the comparison
 // again. The run stops there and says so, rather than asking forever, and
