@@ -17,6 +17,7 @@ import (
 
 	"github.com/gitdek/onair/internal/archive"
 	"github.com/gitdek/onair/internal/live"
+	"github.com/gitdek/onair/internal/localmodel"
 	"github.com/gitdek/onair/internal/mac"
 	"github.com/gitdek/onair/internal/mp4"
 	"github.com/gitdek/onair/internal/recorder"
@@ -57,7 +58,10 @@ func main() {
 	if client, err := archive.New(archive.Door); err == nil {
 		door = client
 	}
-	follow := live.Start(live.Defaults, door, screen{}, time.Now)
+	// The model asked about the call runs on this Mac, from the Python
+	// environment tools/setup-models makes in On Air's own folder.
+	judges := map[string]live.Judge{recorder.Local: localmodel.New(filepath.Join(support, "models", "venv", "bin", "python"))}
+	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges)
 	app := recorder.New(live.Tap(edge{}, follow), recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app, follow})
@@ -93,7 +97,7 @@ func (edge) Choices(c recorder.Choices) {
 	for _, d := range c.Displays {
 		displays = append(displays, mac.Choice{ID: d.ID, Title: d.Title, Picked: d.Picked})
 	}
-	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder, c.Live)
+	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder, c.Live, c.Judge)
 }
 
 // screen is the Mac, as the live side asks things of it.
@@ -107,7 +111,7 @@ func (screen) Show(p live.Panel) {
 	for _, l := range p.Links {
 		links = append(links, mac.Link{Kind: l.Kind.String(), Title: l.Title, Date: l.Date, Why: l.Why, URL: l.URL})
 	}
-	mac.ShowPanel(p.Visible, p.Display, p.Status, links)
+	mac.ShowPanel(p.Visible, p.Display, p.Status, p.Calls, links)
 }
 
 // bridge is the recorder and the live side, as the Mac reports things to
@@ -170,6 +174,8 @@ func (b bridge) Menu(action int) {
 		b.app.Menu(recorder.ChooseFolder)
 	case mac.MenuLive:
 		b.app.Menu(recorder.ToggleLive)
+	case mac.MenuLocal:
+		b.app.Menu(recorder.AskLocal)
 	}
 }
 

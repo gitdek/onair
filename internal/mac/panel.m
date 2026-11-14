@@ -61,11 +61,15 @@ static CGFloat OALabel(NSView *into, NSString *text, NSFont *font, NSColor *colo
     return height;
 }
 
-NSView *OAPanelContent(NSString *status, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+NSView *OAPanelContent(NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     OAFlipped *content = [[OAFlipped alloc] initWithFrame:NSMakeRect(0, 0, panelWidth, 100)];
     CGFloat inner = panelWidth - 2 * margin, y = margin;
     y += OALabel(content, @"Live Context", [NSFont boldSystemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 1) + 4;
     y += OALabel(content, status, [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 5);
+    for (NSString *said in calls) {
+        y += 6;
+        y += OALabel(content, said, [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], NSColor.labelColor, margin, y, inner, 2);
+    }
     for (NSDictionary<NSString *, NSString *> *link in links) {
         y += gap;
         OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin, y, inner, 10)];
@@ -149,13 +153,13 @@ static NSPanel *OAPanel(void) {
     return panel;
 }
 
-void OAPanelShow(BOOL visible, NSString *display, NSString *status, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+void OAPanelShow(BOOL visible, NSString *display, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     if (!visible) {
         [panel orderOut:nil];
         return;
     }
     NSPanel *p = OAPanel();
-    NSView *content = OAPanelContent(status, links);
+    NSView *content = OAPanelContent(status, calls, links);
     NSRect size = content.frame;
     background.frame = size;
     background.subviews = @[ content ];

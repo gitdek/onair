@@ -33,6 +33,7 @@ type Controller struct {
 	mu        sync.Mutex // guards what the inputs set, and is held only to set or take it
 	on        bool
 	recording bool
+	judge     string // the judge chosen, by name, or none
 	display   string
 	leftOut   bool
 	heard     []Heard
@@ -43,6 +44,17 @@ type Controller struct {
 	answers chan answer
 	out     atomic.Int32 // questions not yet returned
 	stopped atomic.Bool  // the controller gave up after too many panics
+
+	judges   map[string]Judge
+	verdicts chan verdict
+	judging  atomic.Int32 // rounds not yet returned
+}
+
+type verdict struct {
+	round   int
+	records []Link
+	v       Verdict
+	err     error
 }
 
 type report struct {
@@ -57,12 +69,18 @@ type answer struct {
 }
 
 // Start starts a controller with the numbers in cfg. A nil archive answers
-// every question with an error.
-func Start(cfg Config, archive Archive, screen Screen, now func() time.Time) *Controller {
-	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now,
-		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1)}
+// every question with an error. Judges are the judges that can be chosen,
+// by name.
+func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge) *Controller {
+	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges,
+		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1)}
 	go c.run()
 	return c
+}
+
+// Judging says which judge is chosen, by name, or none when empty.
+func (c *Controller) Judging(name string) {
+	c.set(func() { c.judge = name })
 }
 
 // Enabled says whether Live Context is turned on.
@@ -141,13 +159,16 @@ func (c *Controller) run() {
 	panics := 0
 	for {
 		var got *answer
+		var judged *verdict
 		select {
 		case <-c.wake:
 		case <-t.C:
 		case a := <-c.answers:
 			got = &a
+		case v := <-c.verdicts:
+			judged = &v
 		}
-		err := c.step(f, got, s)
+		err := c.step(f, got, judged, s)
 		if err == nil {
 			continue
 		}
@@ -156,6 +177,9 @@ func (c *Controller) run() {
 			continue
 		}
 		c.stopped.Store(true)
+		if s.judge != nil {
+			c.safely(s.judge.Close)
+		}
 		c.safely(func() { c.screen.Listen(false, c.cfg.Chunk) })
 		c.safely(func() {
 			c.screen.Show(Panel{Visible: f.on && f.recording, Display: f.display, Status: "Live Context stopped after an error, and recording carries on: " + sentence(err.Error())})
@@ -164,14 +188,15 @@ func (c *Controller) run() {
 	}
 }
 
-// sent is what the Mac was last told.
+// sent is what the Mac was last told, and the judge in use.
 type sent struct {
 	listening bool
 	panel     Panel
 	shown     bool
+	judge     Judge
 }
 
-func (c *Controller) step(f *follow, got *answer, s *sent) (err error) {
+func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
@@ -179,7 +204,7 @@ func (c *Controller) step(f *follow, got *answer, s *sent) (err error) {
 	}()
 	now := c.now()
 	c.mu.Lock()
-	on, recording, display, leftOut := c.on, c.recording, c.display, c.leftOut
+	on, recording, display, leftOut, name := c.on, c.recording, c.display, c.leftOut, c.judge
 	heard, reports := c.heard, c.reports
 	c.heard, c.reports = nil, nil
 	c.mu.Unlock()
@@ -199,6 +224,24 @@ func (c *Controller) step(f *follow, got *answer, s *sent) (err error) {
 		f.answer(got.ask, got.found, got.err, now)
 	}
 	f.abandon(now)
+	// A judge runs only while chosen with Live Context on, and one that
+	// is no longer wanted is stopped.
+	judge := c.judges[name]
+	if !on {
+		judge = nil
+	}
+	if judge != s.judge {
+		if s.judge != nil {
+			old := s.judge
+			go c.safely(old.Close)
+		}
+		s.judge = judge
+	}
+	f.judge(judge != nil)
+	if judged != nil {
+		f.judgement(judged.round, judged.records, judged.v, judged.err, now)
+	}
+	f.abandonRound(now)
 	if listening := f.listening(); listening != s.listening {
 		c.screen.Listen(listening, c.cfg.Chunk)
 		s.listening = listening
@@ -206,6 +249,11 @@ func (c *Controller) step(f *follow, got *answer, s *sent) (err error) {
 	if c.out.Load() < inFlight {
 		if text, ask, ok := f.due(now); ok {
 			c.ask(text, ask)
+		}
+	}
+	if judge != nil && c.judging.Load() < inFlight {
+		if r, round, ok := f.roundDue(now); ok {
+			c.round(judge, r, round)
 		}
 	}
 	if p := f.panel(now); !s.shown || !reflect.DeepEqual(p, s.panel) {
@@ -240,6 +288,28 @@ func (c *Controller) ask(text string, ask int) {
 		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
 		defer cancel()
 		a.found, a.err = c.archive.Connections(ctx, text)
+	}()
+}
+
+// round asks a judge on a goroutine of its own, for at most
+// c.cfg.JudgeTimeout, and hands the verdict back to run, as ask does.
+func (c *Controller) round(judge Judge, r Round, round int) {
+	c.judging.Add(1)
+	go func() {
+		v := verdict{round: round, records: r.Records}
+		defer func() {
+			if p := recover(); p != nil {
+				v.v, v.err = Verdict{}, fmt.Errorf("the model failed: %v", p)
+			}
+			c.judging.Add(-1)
+			select {
+			case c.verdicts <- v:
+			default:
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.JudgeTimeout)
+		defer cancel()
+		v.v, v.err = judge.Judge(ctx, r)
 	}()
 }
 

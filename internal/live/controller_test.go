@@ -108,7 +108,7 @@ func say(c *Controller, stop chan struct{}) {
 func TestTheControllerAsksAndShowsWhatTheCallConnectsTo(t *testing.T) {
 	screen := &fakeScreen{}
 	archive := &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}
-	c := Start(fast, archive, screen, time.Now)
+	c := Start(fast, archive, screen, time.Now, nil)
 	c.Enabled(true)
 	waitFor(t, "the question about speech recognition", func() bool { asks, _ := screen.said(); return asks == 1 })
 	if _, listens := screen.said(); len(listens) != 0 {
@@ -167,9 +167,9 @@ func TestWhatGoesWrongAskingIsSaidInThePanelOnly(t *testing.T) {
 			var c *Controller
 			archive := &fakeArchive{answer: tc.answer}
 			if tc.nilArchive {
-				c = Start(fast, nil, screen, time.Now)
+				c = Start(fast, nil, screen, time.Now, nil)
 			} else {
-				c = Start(fast, archive, screen, time.Now)
+				c = Start(fast, archive, screen, time.Now, nil)
 			}
 			c.Enabled(true)
 			c.Capturing("", true)
@@ -191,7 +191,7 @@ func TestWhatGoesWrongAskingIsSaidInThePanelOnly(t *testing.T) {
 
 func TestABrokenScreenStopsTheControllerAndNothingElse(t *testing.T) {
 	screen := &fakeScreen{broken: true}
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}, screen, time.Now)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}, screen, time.Now, nil)
 	c.Enabled(true)
 	c.Recording(true)
 	waitFor(t, "the controller to stop", c.stopped.Load)
@@ -214,7 +214,7 @@ func TestABrokenScreenStopsTheControllerAndNothingElse(t *testing.T) {
 func TestInputsNeverWaitForAControllerThatHangs(t *testing.T) {
 	screen := &fakeScreen{hang: make(chan struct{})}
 	defer close(screen.hang)
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil)
 	c.Enabled(true)
 	c.Recording(true)
 	time.Sleep(20 * time.Millisecond)

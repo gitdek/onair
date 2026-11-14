@@ -17,6 +17,7 @@ import "C"
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -95,6 +96,7 @@ const (
 	MenuWindow = int(C.ONAIR_MENU_WINDOW)
 	MenuChoose = int(C.ONAIR_MENU_CHOOSE)
 	MenuLive   = int(C.ONAIR_MENU_LIVE)
+	MenuLocal  = int(C.ONAIR_MENU_LOCAL)
 )
 
 // What Live reports.
@@ -378,8 +380,9 @@ type Choice struct {
 }
 
 // Choices sets the part of the menu that picks what to record, names the
-// folder recordings go to, and says whether Live Context is on.
-func Choices(open bool, displays []Choice, area, window, folder string, live bool) {
+// folder recordings go to, says whether Live Context is on, and names the
+// model asked about the call, if any.
+func Choices(open bool, displays []Choice, area, window, folder string, live bool, judge string) {
 	n := len(displays)
 	list := (*C.onair_choice)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_choice{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -393,11 +396,12 @@ func Choices(open bool, displays []Choice, area, window, folder string, live boo
 			C.free(unsafe.Pointer(items[i].title))
 		}
 	}()
-	a, w, f := C.CString(area), C.CString(window), C.CString(folder)
+	a, w, f, j := C.CString(area), C.CString(window), C.CString(folder), C.CString(judge)
 	defer C.free(unsafe.Pointer(a))
 	defer C.free(unsafe.Pointer(w))
 	defer C.free(unsafe.Pointer(f))
-	C.onair_choices(flag(open), list, C.int(n), a, w, f, flag(live))
+	defer C.free(unsafe.Pointer(j))
+	C.onair_choices(flag(open), list, C.int(n), a, w, f, flag(live), j)
 }
 
 // LiveAsk asks whether On Air may recognize speech, which macOS asks the
@@ -414,9 +418,10 @@ func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chu
 type Link struct{ Kind, Title, Date, Why, URL string }
 
 // ShowPanel sets what the live panel shows, beside a display named as
-// Display.ID names it, or the main one when empty, and hides it when
-// visible is false. It returns at once.
-func ShowPanel(visible bool, display, status string, links []Link) {
+// Display.ID names it, or the main one when empty: a status line, what a
+// model said, a line each, and links. It hides the panel when visible is
+// false, and returns at once.
+func ShowPanel(visible bool, display, status string, calls []string, links []Link) {
 	n := len(links)
 	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -435,7 +440,7 @@ func ShowPanel(visible bool, display, status string, links []Link) {
 	for i, l := range links {
 		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
 	}
-	C.onair_live_show(flag(visible), str(display), str(status), list, C.int(n))
+	C.onair_live_show(flag(visible), str(display), str(status), str(strings.Join(calls, "\n")), list, C.int(n))
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,

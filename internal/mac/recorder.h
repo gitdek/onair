@@ -45,6 +45,7 @@ enum {
     ONAIR_MENU_WINDOW = 8, // Select Window…
     ONAIR_MENU_CHOOSE = 9, // Choose Folder…
     ONAIR_MENU_LIVE = 10,  // Show Live Context
+    ONAIR_MENU_LOCAL = 11, // Ask a local model about the call
 };
 
 // What onairLive reports about listening for the live side.
@@ -154,9 +155,9 @@ void onair_show(int recording, const char *last, const char *note);
 // Choices sets the part of the menu that picks what to record, and where
 // recordings go: whether what to record can be picked, the displays, what
 // names the picked area and the picked window, if any, what names the
-// folder recordings go to, and whether Live Context is on. Any thread may
-// call it.
-void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live);
+// folder recordings go to, whether Live Context is on, and which model is
+// asked about the call, if any. Any thread may call it.
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live, const char *judge);
 // SelectArea dims a display and lets a person drag out an area of it.
 // onairArea follows, unless they cancel.
 void onair_select_area(const char *display);
@@ -178,9 +179,10 @@ void onair_live_ask(void);
 // finished words of each sound about every chunk seconds, and onairLive
 // reports what goes wrong.
 void onair_live_listen(int on, double chunk);
-// LiveShow sets what the live panel shows, or hides it. Any thread may
+// LiveShow sets what the live panel shows, or hides it: a status line,
+// what a model said about the call, a line each, and links. Any thread may
 // call it.
-void onair_live_show(int visible, const char *display, const char *status, const onair_link *links, int count);
+void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_link *links, int count);
 // Quit ends the app.
 void onair_quit(void);
 
