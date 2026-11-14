@@ -47,6 +47,10 @@ func (f *fixture) startsOn(app *App) Target {
 	f.t.Helper()
 	before, _, _ := f.edge.counts()
 	app.Menu(Start)
+	// A recording with the microphone asks for it first. Here it is allowed.
+	if f.config.Microphone {
+		app.Event(MicrophoneAllowed, "")
+	}
 	if after, _, _ := f.edge.counts(); after != before+1 {
 		f.t.Fatalf("Start didn't ask for capture: %+v", f.edge.latest())
 	}

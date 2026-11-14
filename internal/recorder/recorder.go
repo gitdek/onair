@@ -18,6 +18,10 @@ import (
 
 // Edge is the part that touches the machine.
 type Edge interface {
+	// AskMicrophone asks whether On Air may use the microphone, which
+	// macOS asks the person the first time. MicrophoneAllowed or
+	// MicrophoneRefused follows, once there is an answer.
+	AskMicrophone()
 	// Start asks for capture. Started, Failed, MicrophoneFailed or
 	// TargetGone follows.
 	Start(Config)
@@ -44,6 +48,7 @@ type Config struct {
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
 	Microphone   bool    // mix the microphone into the display's sound
+	QuietSeconds float64 // how long capture waits for the microphone's sound before saying none came
 	Target       Target  // what to capture
 }
 
@@ -81,12 +86,26 @@ const (
 	WindowClosed
 	// PickerFailed says the window picker didn't open.
 	PickerFailed
+	// MicrophoneAllowed says On Air may use the microphone.
+	MicrophoneAllowed
+	// MicrophoneRefused says it may not.
+	MicrophoneRefused
+	// MicrophoneQuiet says that capture, recording with the microphone, has
+	// had none of its sound for QuietSeconds. Its message says what came
+	// instead.
+	MicrophoneQuiet
+	// MicrophoneHeard says the microphone's sound came after
+	// MicrophoneQuiet.
+	MicrophoneHeard
 )
 
 type state int
 
 const (
 	idle state = iota
+	// asking waits for the answer about the microphone, before capture
+	// starts.
+	asking
 	starting
 	recording
 	stopping
@@ -114,6 +133,9 @@ type App struct {
 	// mic says why this recording has no microphone, when one was asked
 	// for and couldn't be had.
 	mic string
+	// unheard is what capture said came from the microphone instead of its
+	// sound, until its sound comes.
+	unheard string
 
 	displays []Display // connected, as the edge last reported
 	picked   picked    // the display and area to record, remembered
@@ -181,6 +203,11 @@ func (a *App) Menu(action Action) {
 	defer a.mu.Unlock()
 	switch action {
 	case Start:
+		if a.state == asking {
+			a.note = askingNote
+			a.show()
+			return
+		}
 		if a.state != idle {
 			a.note = "On Air is already recording. Stop it before starting another."
 			a.show()
@@ -195,10 +222,19 @@ func (a *App) Menu(action Action) {
 		}
 		t, f := a.target()
 		a.rec, a.name, a.pieces, a.state, a.note = r, name, 0, starting, "Starting…"
-		a.mic, a.fallback, a.stopped = "", f, ""
+		a.mic, a.unheard, a.fallback, a.stopped = "", "", f, ""
 		a.broken, a.cut = false, ""
 		a.asked = a.config
 		a.asked.Target = t
+		// The microphone is asked for before capture starts, so that a
+		// question from macOS is answered before anything is recorded, and
+		// the recording starts once it is.
+		if a.asked.Microphone {
+			a.state, a.note = asking, askingNote
+			a.show()
+			a.edge.AskMicrophone()
+			return
+		}
 		a.show()
 		a.edge.Start(a.asked)
 	case Stop:
@@ -236,6 +272,12 @@ func (a *App) Menu(action Action) {
 		// Finish the recording first. If the app is killed instead, the
 		// pieces are on disk and the next launch joins them.
 		a.quitting = true
+		if a.state == asking {
+			// Nothing was recorded, and capture never started: the
+			// recording ends at once, and the answer finds nothing to start.
+			a.finish("", "")
+			return
+		}
 		if a.state == recording {
 			a.state, a.note = stopping, "Finishing…"
 			a.show()
@@ -307,6 +349,40 @@ func (a *App) Event(event Event, message string) {
 	case PickerFailed:
 		a.note = "The window picker didn't open: " + message
 		a.show()
+	case MicrophoneAllowed, MicrophoneRefused:
+		if a.state != asking {
+			return
+		}
+		a.state, a.note = starting, "Starting…"
+		if event == MicrophoneRefused {
+			// The display is worth recording without the microphone.
+			a.mic = "On Air isn't allowed to use it. Allow On Air in System Settings, Privacy & Security, Microphone, then start a new recording."
+			a.asked.Microphone = false
+			a.note = "Starting without the microphone…"
+		}
+		a.show()
+		a.edge.Start(a.asked)
+	case MicrophoneQuiet:
+		if !a.asked.Microphone || (a.state != recording && a.state != stopping) {
+			return
+		}
+		if message == "" {
+			message = "none of its sound came."
+		}
+		a.unheard = message
+		if a.state == recording {
+			a.note = a.recordingNote()
+			a.show()
+		}
+	case MicrophoneHeard:
+		if a.unheard == "" {
+			return
+		}
+		a.unheard = ""
+		if a.state == recording {
+			a.note = a.recordingNote()
+			a.show()
+		}
 	case Finished, Failed, MicrophoneFailed, TargetGone:
 		if event == MicrophoneFailed && a.withoutMicrophone(message) {
 			return
@@ -345,13 +421,19 @@ func (a *App) withoutMicrophone(why string) bool {
 	return true
 }
 
+// askingNote is what the menu says while the microphone is being asked for.
+const askingNote = "Recording starts once macOS's question about the microphone is answered."
+
 // recordingNote is what the menu says while this recording runs: whether it
-// is of something else than was picked, and whether it lacks the
-// microphone. The lock is held.
+// is of something else than was picked, whether it lacks the microphone,
+// and whether the microphone's sound hasn't come. The lock is held.
 func (a *App) recordingNote() string {
 	mic := ""
-	if a.mic != "" {
+	switch {
+	case a.mic != "":
 		mic = "The microphone isn't being recorded: " + a.mic
+	case a.unheard != "":
+		mic = "The microphone isn't being heard: " + a.unheard + " If macOS asked about the microphone, allow it, then stop and start again. Otherwise check that it's plugged in and not muted."
 	}
 	return join(a.fallback.now(), mic)
 }
@@ -362,6 +444,7 @@ func (a *App) recordingNote() string {
 // capture says it left out.
 func (a *App) finish(why, left string) {
 	r, name, kept, during, mic, f, cut := a.rec, a.name, a.note, a.recordingNote(), a.mic, a.fallback, a.cut
+	unheard := a.unheard
 	a.rec, a.state = nil, joining
 	a.show()
 	go func() {
@@ -394,7 +477,8 @@ func (a *App) finish(why, left string) {
 		}
 		// A recording ended early by a piece that couldn't be written says
 		// so, and one that was kept says if it isn't of what was picked,
-		// what capture left out of it, and if it has no microphone.
+		// what capture left out of it, if it has no microphone, and if the
+		// microphone's sound never came.
 		if errors.Is(err, errNothing) {
 			a.note = join(a.note, cut)
 		} else {
@@ -404,7 +488,10 @@ func (a *App) finish(why, left string) {
 			if mic != "" {
 				mic = "The microphone wasn't recorded: " + mic
 			}
-			a.note = join(a.note, cut, f.then(), left, mic)
+			if unheard != "" {
+				unheard = "The microphone wasn't heard: " + unheard
+			}
+			a.note = join(a.note, cut, f.then(), left, mic, unheard)
 		}
 		a.show()
 		if a.quitting {
