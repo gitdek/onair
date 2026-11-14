@@ -350,9 +350,10 @@ func (d *Delivery) path(t handover.Target) (string, error) {
 }
 
 // compare compares the file at path in the folder with On Air's own copy,
-// byte for byte. A name with nothing under it comes to absent, and one
-// with anything but a file under it, such as a folder or a link, isn't the
-// same.
+// byte for byte. A name with nothing under it comes to absent. One with
+// anything but a file under it, such as a folder or a link, isn't the
+// same, and neither is On Air's own copy itself, which is what has the
+// name when the folder is the recording's own directory in the spool.
 func (d *Delivery) compare(path string, absent handover.Reply) (handover.Reply, error) {
 	if reply, err := d.folderThere(); reply != handover.NoReply || err != nil {
 		return reply, err
@@ -369,7 +370,7 @@ func (d *Delivery) compare(path string, absent handover.Reply) (handover.Reply, 
 	case !info.Mode().IsRegular():
 		return handover.Different, nil
 	}
-	same, err := d.same(d.Spool(), path)
+	same, err := d.same(path)
 	if err != nil {
 		return d.failed(err)
 	}
@@ -379,14 +380,22 @@ func (d *Delivery) compare(path string, absent handover.Reply) (handover.Reply, 
 	return handover.Different, nil
 }
 
-// same says whether two files hold the same bytes.
-func (d *Delivery) same(a, b string) (bool, error) {
-	fa, err := os.Open(a)
+// same says whether the file at path holds the same bytes as On Air's own
+// copy, and is a file of its own. It is opened without following a link,
+// so what is compared is what was looked at: a link, anything but a file,
+// and On Air's own copy under the name, aren't the same. Counted as the
+// folder's, On Air's own copy would be removed once its days were up,
+// with nothing left of the recording but its pieces.
+func (d *Delivery) same(path string) (bool, error) {
+	fa, err := os.Open(d.Spool())
 	if err != nil {
 		return false, err
 	}
 	defer fa.Close()
-	fb, err := os.Open(b)
+	fb, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ELOOP) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
@@ -399,7 +408,7 @@ func (d *Delivery) same(a, b string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if ia.Size() != ib.Size() {
+	if !ib.Mode().IsRegular() || os.SameFile(ia, ib) || ia.Size() != ib.Size() {
 		return false, nil
 	}
 	ba, bb := make([]byte, d.chunk), make([]byte, d.chunk)

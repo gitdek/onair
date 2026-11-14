@@ -615,10 +615,18 @@ func (a *App) destination() string {
 }
 
 // FolderChosen keeps the folder a person picked for recordings to go to,
-// and tries again each hand-over that failed, now to that folder.
+// and tries again each hand-over that failed, now to that folder. A folder
+// in On Air's spool is refused: a recording handed to it would be handed
+// to itself.
 func (a *App) FolderChosen(path string) {
 	a.mu.Lock()
 	if path == "" {
+		a.mu.Unlock()
+		return
+	}
+	if a.inSpool(path) {
+		a.note = fmt.Sprintf("“%s” is in On Air's spool, where it keeps its own copies, so recordings can't go there. Choose the folder On the Record watches.", filepath.Base(path))
+		a.show()
 		a.mu.Unlock()
 		return
 	}
@@ -634,6 +642,19 @@ func (a *App) FolderChosen(path string) {
 	a.show()
 	a.mu.Unlock()
 	a.handOverPending(true)
+}
+
+// inSpool says whether folder is On Air's spool or a folder in it, once
+// links are followed.
+func (a *App) inSpool(folder string) bool {
+	resolve := func(path string) string {
+		if real, err := filepath.EvalSymlinks(path); err == nil {
+			return real
+		}
+		return filepath.Clean(path)
+	}
+	rel, err := filepath.Rel(resolve(a.spool), resolve(folder))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Tidy removes On Air's own copy of each recording the folder has held for
