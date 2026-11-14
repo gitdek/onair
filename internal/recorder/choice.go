@@ -37,6 +37,7 @@ type Choices struct {
 	Area     string   // names the picked area, when there is one
 	Window   string   // names the picked window, when there is one
 	Folder   string   // names the folder recordings go to
+	Live     bool     // whether Live Context is on
 }
 
 // Choice is a display in the menu.
@@ -173,7 +174,7 @@ func (a *App) canChoose() bool {
 func (a *App) remember(p picked) {
 	a.picked, a.note = p, ""
 	if a.settings != "" {
-		if err := settings.Save(a.settings, kept{picked: p, Folder: a.folder}); err != nil {
+		if err := settings.Save(a.settings, kept{picked: p, Folder: a.folder, Live: a.live}); err != nil {
 			a.note = "On Air records this until it quits, but couldn't remember it: " + err.Error()
 		}
 	}
@@ -271,7 +272,7 @@ const ownFolder = "On Air's own folder, until one is picked"
 // choices is what the menu offers to record, and where recordings go. The
 // lock is held.
 func (a *App) choices() Choices {
-	c := Choices{Open: a.state == idle, Folder: ownFolder}
+	c := Choices{Open: a.state == idle, Folder: ownFolder, Live: a.live}
 	if a.folder != "" {
 		c.Folder = filepath.Base(a.folder)
 	}
