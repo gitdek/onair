@@ -37,6 +37,8 @@ type Handler interface {
 	Area(display string, area Area)
 	// Window names the window a person picked, which the edge keeps.
 	Window(name string)
+	// Folder is the folder a person picked for recordings to go to.
+	Folder(path string)
 }
 
 // Display is a connected display.
@@ -83,6 +85,7 @@ const (
 	MenuArea   = int(C.ONAIR_MENU_AREA)
 	MenuWhole  = int(C.ONAIR_MENU_WHOLE)
 	MenuWindow = int(C.ONAIR_MENU_WINDOW)
+	MenuChoose = int(C.ONAIR_MENU_CHOOSE)
 )
 
 // Config is what a recording is asked to be.
@@ -171,6 +174,13 @@ func onairArea(display *C.char, x, y, width, height C.double) {
 func onairWindow(name *C.char) {
 	if h := current(); h != nil {
 		h.Window(C.GoString(name))
+	}
+}
+
+//export onairFolder
+func onairFolder(path *C.char) {
+	if h := current(); h != nil {
+		h.Folder(C.GoString(path))
 	}
 }
 
@@ -325,8 +335,9 @@ type Choice struct {
 	Picked    bool
 }
 
-// Choices sets the part of the menu that picks what to record.
-func Choices(open bool, displays []Choice, area, window string) {
+// Choices sets the part of the menu that picks what to record, and names
+// the folder recordings go to.
+func Choices(open bool, displays []Choice, area, window, folder string) {
 	n := len(displays)
 	list := (*C.onair_choice)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_choice{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -340,10 +351,11 @@ func Choices(open bool, displays []Choice, area, window string) {
 			C.free(unsafe.Pointer(items[i].title))
 		}
 	}()
-	a, w := C.CString(area), C.CString(window)
+	a, w, f := C.CString(area), C.CString(window), C.CString(folder)
 	defer C.free(unsafe.Pointer(a))
 	defer C.free(unsafe.Pointer(w))
-	C.onair_choices(flag(open), list, C.int(n), a, w)
+	defer C.free(unsafe.Pointer(f))
+	C.onair_choices(flag(open), list, C.int(n), a, w, f)
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,
@@ -357,6 +369,14 @@ func SelectArea(display string) {
 // SelectWindow shows the system's picker for one window: Window follows,
 // unless they cancel.
 func SelectWindow() { C.onair_select_window() }
+
+// ChooseFolder shows the system's folder picker, opened on current: Folder
+// follows, unless they cancel.
+func ChooseFolder(current string) {
+	c := C.CString(current)
+	defer C.free(unsafe.Pointer(c))
+	C.onair_choose_folder(c)
+}
 
 // frameSize is the picture's size in pixels that capture takes for content
 // of a size in points at a scale.

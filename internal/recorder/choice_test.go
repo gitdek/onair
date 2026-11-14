@@ -93,7 +93,7 @@ func TestUntilAPersonPicksTheMainDisplayIsRecorded(t *testing.T) {
 		t.Fatal("a choice could be made while recording")
 	}
 	f.stopped()
-	if s := f.edge.latest(); s.note != "" || !f.edge.latestChoices().Open {
+	if s := f.edge.latest(); s.note != f.handed("") || !f.edge.latestChoices().Open {
 		t.Fatalf("after the recording: %+v, %+v", s, f.edge.latestChoices())
 	}
 }
@@ -143,7 +143,7 @@ func TestAPickedDisplayThatIsntConnectedGivesWayToTheMainOne(t *testing.T) {
 		t.Fatalf("while recording: %+v", s)
 	}
 	f.stopped()
-	if s := f.edge.latest(); s.note != "The picked display wasn't connected, so On Air recorded the main display." {
+	if s := f.edge.latest(); s.note != f.handed("The picked display wasn't connected, so On Air recorded the main display.") {
 		t.Fatalf("after the recording: %+v", s)
 	}
 	// It is still the choice, once it is back.
@@ -199,7 +199,7 @@ func TestAnAreaThatNoLongerFitsGivesWayToTheWholeDisplay(t *testing.T) {
 		t.Fatalf("while recording: %+v", s)
 	}
 	f.stopped()
-	if s := f.edge.latest(); s.note != "The picked area didn't fit the display, so On Air recorded the whole display." {
+	if s := f.edge.latest(); s.note != f.handed("The picked area didn't fit the display, so On Air recorded the whole display.") {
 		t.Fatalf("after the recording: %+v", s)
 	}
 }
@@ -255,7 +255,7 @@ func TestAPickedWindowIsRecordedUntilItIsGone(t *testing.T) {
 		t.Fatalf("the window is still offered: %+v", c)
 	}
 	f.stopped()
-	if s := f.edge.latest(); s.note != "The picked window was gone, so On Air recorded the whole display." {
+	if s := f.edge.latest(); s.note != f.handed("The picked window was gone, so On Air recorded the whole display.") {
 		t.Fatalf("after the recording: %+v", s)
 	}
 	if got := f.started(); got != (Target{Display: "B"}) {
@@ -291,7 +291,7 @@ func TestAWindowThatClosesMidRecordingEndsIt(t *testing.T) {
 		t.Fatalf("recordings: %v", names)
 	}
 	s := f.edge.latest()
-	if s.recording || s.note != "Recording stopped by itself: the window being recorded closed. What was recorded is saved: 1 piece, about 4s." {
+	if s.recording || s.note != f.handed("Recording stopped by itself: the window being recorded closed. What was recorded is saved: 1 piece, about 4s.") {
 		t.Fatalf("after the window closed: %+v", s)
 	}
 	if c := f.edge.latestChoices(); c.Window != "" || !c.Open {
@@ -304,7 +304,7 @@ func TestAWindowThatClosesMidRecordingEndsIt(t *testing.T) {
 		t.Fatalf("a window that closed while idle: %d stops, %+v", stops, f.edge.latestChoices())
 	}
 	f.app.Event(PickerFailed, "the system refused.")
-	if s := f.edge.latest(); s.note != "The window picker didn't open: the system refused." {
+	if s := f.edge.latest(); s.note != f.handed("The window picker didn't open: the system refused.") {
 		t.Fatalf("a picker that failed: %+v", s)
 	}
 }
@@ -417,6 +417,7 @@ func TestUnreadableSettingsAreSaidBesideARecovery(t *testing.T) {
 	again := f.newApp()
 	again.Displays([]Display{builtIn})
 	again.Launched()
+	f.idle(again)
 	if s := f.edge.latest(); !strings.Contains(s.note, "couldn't read what to record") || !strings.Contains(s.note, "Recovered a recording that was cut short") {
 		t.Fatalf("after the launch: %+v", s)
 	}

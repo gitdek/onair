@@ -257,6 +257,34 @@ void onair_select_window(void) {
     });
 }
 
+static NSOpenPanel *folderPanel;
+
+void onair_choose_folder(const char *current) {
+    NSString *at = [NSString stringWithUTF8String:current ?: ""];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (folderPanel) {
+            [folderPanel makeKeyAndOrderFront:nil];
+            return;
+        }
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        panel.canChooseDirectories = YES;
+        panel.canChooseFiles = NO;
+        panel.allowsMultipleSelection = NO;
+        panel.canCreateDirectories = YES;
+        panel.prompt = @"Choose";
+        panel.message = @"Choose the folder On Air hands each finished recording to: the one On the Record watches.";
+        if (at.length) panel.directoryURL = [NSURL fileURLWithPath:at isDirectory:YES];
+        folderPanel = panel;
+        // A menu-bar app comes forward, so its panel takes the keys.
+        [NSApp activate];
+        [panel beginWithCompletionHandler:^(NSModalResponse response) {
+            folderPanel = nil;
+            NSURL *url = panel.URL;
+            if (response == NSModalResponseOK && url.fileURL) onairFolder((char *)url.path.fileSystemRepresentation);
+        }];
+    });
+}
+
 SCContentFilter *OAPickedWindow(CGWindowID *window) {
     if (window) *window = picker.window;
     return picker.filter;
