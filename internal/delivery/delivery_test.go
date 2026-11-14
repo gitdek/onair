@@ -585,6 +585,28 @@ func TestOnAirsOwnCopyIsNeverTakenForTheFolders(t *testing.T) {
 	}
 }
 
+// A copy is always a new file. A link under the hidden name, to another
+// program's file, is never written through: that file stays exactly as it
+// was, and the recording is handed over (docs/PRD.md, rule 11).
+func TestACopyIsNeverWrittenThroughALink(t *testing.T) {
+	for _, link := range []string{"hard", "symbolic"} {
+		p := newPlace(t)
+		theirs := filepath.Join(p.folder, "Archive", "old.mp4")
+		makeLink := os.Link
+		if link == "symbolic" {
+			makeLink = os.Symlink
+		}
+		if err := makeLink(theirs, p.hidden()); err != nil {
+			t.Fatal(err)
+		}
+		r := p.run(nil, start)
+		if got, _ := os.ReadFile(theirs); string(got) != "an older recording" {
+			t.Fatalf("through a %s link, the copy went into another program's file: %.40q", link, got)
+		}
+		p.delivered(r)
+	}
+}
+
 // A folder that isn't there fails the hand-over, which keeps On Air's own
 // copy and is tried again.
 func TestAFolderThatIsGoneFailsTheHandOver(t *testing.T) {
