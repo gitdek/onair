@@ -13,6 +13,7 @@ import (
 type fakeEdge struct {
 	mu       sync.Mutex
 	starts   int
+	asked    []Config
 	stops    int
 	quits    int
 	revealed []string
@@ -24,9 +25,14 @@ type shown struct {
 	last, note string
 }
 
-func (e *fakeEdge) Start(Config) { e.mu.Lock(); e.starts++; e.mu.Unlock() }
-func (e *fakeEdge) Stop()        { e.mu.Lock(); e.stops++; e.mu.Unlock() }
-func (e *fakeEdge) Quit()        { e.mu.Lock(); e.quits++; e.mu.Unlock() }
+func (e *fakeEdge) Start(c Config) {
+	e.mu.Lock()
+	e.starts++
+	e.asked = append(e.asked, c)
+	e.mu.Unlock()
+}
+func (e *fakeEdge) Stop() { e.mu.Lock(); e.stops++; e.mu.Unlock() }
+func (e *fakeEdge) Quit() { e.mu.Lock(); e.quits++; e.mu.Unlock() }
 func (e *fakeEdge) Reveal(p string) {
 	e.mu.Lock()
 	e.revealed = append(e.revealed, p)
@@ -51,18 +57,38 @@ func (e *fakeEdge) counts() (starts, stops, quits int) {
 	return e.starts, e.stops, e.quits
 }
 
+// microphones says, for each start, whether it asked for the microphone.
+func (e *fakeEdge) microphones() []bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var asked []bool
+	for _, c := range e.asked {
+		asked = append(asked, c.Microphone)
+	}
+	return asked
+}
+
 type fixture struct {
-	t     *testing.T
-	edge  *fakeEdge
-	app   *App
-	spool string
-	out   string
+	t      *testing.T
+	edge   *fakeEdge
+	app    *App
+	config Config
+	spool  string
+	out    string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
-	f := &fixture{t: t, edge: &fakeEdge{}, spool: filepath.Join(dir, "spool"), out: filepath.Join(dir, "recordings")}
+	f := &fixture{t: t, edge: &fakeEdge{}, config: Config{PieceSeconds: 4}, spool: filepath.Join(dir, "spool"), out: filepath.Join(dir, "recordings")}
+	f.app = f.newApp()
+	return f
+}
+
+// withMicrophone is a fixture whose recordings ask for the microphone.
+func withMicrophone(t *testing.T) *fixture {
+	f := newFixture(t)
+	f.config.Microphone = true
 	f.app = f.newApp()
 	return f
 }
@@ -70,7 +96,7 @@ func newFixture(t *testing.T) *fixture {
 // newApp is a fresh process over the same directories.
 func (f *fixture) newApp() *App {
 	at := time.Date(2026, 11, 13, 18, 30, 0, 0, time.UTC)
-	return New(f.edge, Config{PieceSeconds: 4}, f.spool, f.out, func() time.Time { at = at.Add(time.Second); return at })
+	return New(f.edge, f.config, f.spool, f.out, func() time.Time { at = at.Add(time.Second); return at })
 }
 
 // idle waits for the join that follows a recording's end.
@@ -329,5 +355,142 @@ func TestQuitFinishesTheRecordingFirst(t *testing.T) {
 	g.app.Menu(Quit)
 	if _, _, quits := g.edge.counts(); quits != 1 {
 		t.Fatal("quit with nothing recording didn't quit")
+	}
+}
+
+// The display is recorded without the microphone rather than not at all,
+// and the menu says so while it records and after.
+func TestTheDisplayIsRecordedWhenTheMicrophoneCantBe(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneFailed, "no microphone was found.")
+	if asked := f.edge.microphones(); len(asked) != 2 || !asked[0] || asked[1] {
+		t.Fatalf("starts asked for the microphone: %v", asked)
+	}
+	if s := f.edge.latest(); s.recording || s.note != "Starting without the microphone…" {
+		t.Fatalf("starting again shows %+v", s)
+	}
+	f.app.Event(Started, "")
+	if s := f.edge.latest(); !s.recording || s.note != "The microphone isn't being recorded: no microphone was found." {
+		t.Fatalf("recording without the microphone shows %+v", s)
+	}
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Menu(Stop)
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	names := f.files()
+	if len(names) != 1 {
+		t.Fatalf("recordings: %v", names)
+	}
+	if s := f.edge.latest(); s.recording || s.last != filepath.Join(f.out, names[0]) || s.note != "The microphone wasn't recorded: no microphone was found." {
+		t.Fatalf("after stopping the dot shows %+v", s)
+	}
+	// The next recording asks for the microphone again.
+	f.app.Menu(Start)
+	if asked := f.edge.microphones(); len(asked) != 3 || !asked[2] {
+		t.Fatalf("starts asked for the microphone: %v", asked)
+	}
+	f.app.Event(Started, "")
+	if s := f.edge.latest(); !s.recording || s.note != "" {
+		t.Fatalf("recording with the microphone shows %+v", s)
+	}
+}
+
+func TestTheMicrophoneIsLeftOutOnceARecording(t *testing.T) {
+	// Capture that doesn't start without the microphone either has failed,
+	// and nothing is kept.
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneFailed, "On Air isn't allowed to use it.")
+	f.app.Event(Failed, "On Air can't see the screen.")
+	f.idle(f.app)
+	if starts, _, _ := f.edge.counts(); starts != 2 {
+		t.Fatalf("capture was started %d times", starts)
+	}
+	if s := f.edge.latest(); s.recording || s.last != "" || s.note != "On Air can't see the screen." {
+		t.Fatalf("a start that failed shows %+v", s)
+	}
+	if entries, _ := os.ReadDir(f.spool); len(entries) != 0 {
+		t.Fatalf("a start that failed left a recording: %v", entries)
+	}
+	// A second word about the microphone is a failure, not a third start.
+	g := withMicrophone(t)
+	g.app.Menu(Start)
+	g.app.Event(MicrophoneFailed, "capture didn't start with it.")
+	g.app.Event(MicrophoneFailed, "capture didn't start with it, again.")
+	g.idle(g.app)
+	if starts, _, _ := g.edge.counts(); starts != 2 {
+		t.Fatalf("capture was started %d times", starts)
+	}
+	if s := g.edge.latest(); s.recording || s.note != "capture didn't start with it, again." {
+		t.Fatalf("a second microphone failure shows %+v", s)
+	}
+	// So is any word about it when none was asked for.
+	h := newFixture(t)
+	h.app.Menu(Start)
+	h.app.Event(MicrophoneFailed, "no microphone was found.")
+	h.idle(h.app)
+	if starts, _, _ := h.edge.counts(); starts != 1 {
+		t.Fatalf("capture was started %d times", starts)
+	}
+}
+
+// A recording that stops by itself says why, and that it has no microphone.
+func TestARecordingWithoutTheMicrophoneThatStopsByItselfSaysBoth(t *testing.T) {
+	f := withMicrophone(t)
+	f.app.Menu(Start)
+	f.app.Event(MicrophoneFailed, "no microphone was found.")
+	f.app.Event(Started, "")
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Event(Failed, "capture stopped: the display went away.")
+	f.idle(f.app)
+	s := f.edge.latest()
+	if !strings.Contains(s.note, "the display went away") || !strings.HasSuffix(s.note, "The microphone wasn't recorded: no microphone was found.") {
+		t.Fatalf("the dot shows %+v", s)
+	}
+}
+
+// Quit while capture is starting keeps what it records, as Quit while
+// recording does, and quits once it is joined.
+func TestQuitWhileStartingFinishesTheRecording(t *testing.T) {
+	f := newFixture(t)
+	f.app.Menu(Start)
+	f.app.Menu(Quit)
+	if _, stops, quits := f.edge.counts(); stops != 0 || quits != 0 {
+		t.Fatalf("quit while starting: %d stops, %d quits", stops, quits)
+	}
+	f.app.Event(Started, "")
+	if _, stops, _ := f.edge.counts(); stops != 1 {
+		t.Fatalf("capture that started after Quit was stopped %d times", stops)
+	}
+	f.app.Segment(true, []byte("OPEN|"))
+	f.app.Segment(false, []byte("one|"))
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	for i := 0; i < 2000; i++ {
+		if _, _, quits := f.edge.counts(); quits == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, _, quits := f.edge.counts(); quits != 1 || len(f.files()) != 1 {
+		t.Fatalf("after the recording finished: %d quits, %v", quits, f.files())
+	}
+	// Quit while the microphone is being left out doesn't start again.
+	g := withMicrophone(t)
+	g.app.Menu(Start)
+	g.app.Menu(Quit)
+	g.app.Event(MicrophoneFailed, "no microphone was found.")
+	g.idle(g.app)
+	for i := 0; i < 2000; i++ {
+		if _, _, quits := g.edge.counts(); quits == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if starts, _, quits := g.edge.counts(); starts != 1 || quits != 1 {
+		t.Fatalf("quit while starting with the microphone: %d starts, %d quits", starts, quits)
 	}
 }

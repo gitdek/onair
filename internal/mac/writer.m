@@ -2,13 +2,19 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "_cgo_export.h"
 
+// Sound the writer isn't ready for waits, up to this many buffers a track:
+// four seconds of the mixer's. A buffer left out isn't a gap in the track.
+// The track closes up, and all the sound after it plays early.
+enum { kWaiting = 47 };
+
 @implementation OAWriter {
     AVAssetWriter *_writer;
     AVAssetWriterInput *_picture;
     AVAssetWriterInputPixelBufferAdaptor *_adaptor;
     NSMutableArray<AVAssetWriterInput *> *_sound;
-    CMTime _start;
-    CMTime _lastPicture;
+    NSMutableArray<NSMutableArray *> *_waiting; // sound not yet taken, a list a track
+    CMTime _origin;      // the first frame's time on capture's clock
+    CMTime _lastPicture; // on the recording's timeline
     BOOL _realTime;
 }
 
@@ -16,6 +22,7 @@
     if (!(self = [super init])) return nil;
     _realTime = realTime;
     _sound = [NSMutableArray array];
+    _waiting = [NSMutableArray array];
     _lastPicture = kCMTimeInvalid;
     _writer = [[AVAssetWriter alloc] initWithContentType:UTTypeMPEG4Movie];
     // Segments, not a file: each is handed to the delegate when it is whole,
@@ -60,25 +67,33 @@
         if (![_writer canAddInput:input]) return -1;
         [_writer addInput:input];
         [_sound addObject:input];
+        [_waiting addObject:[NSMutableArray array]];
         return (int)_sound.count - 1;
     } @catch (NSException *e) {
         return -1;
     }
 }
 
-- (BOOL)startAt:(CMTime)time error:(NSError **)error {
+- (BOOL)startAt:(CMTime)origin error:(NSError **)error {
+    if (!CMTIME_IS_NUMERIC(origin)) {
+        if (error) *error = [NSError errorWithDomain:@"onair" code:1 userInfo:@{NSLocalizedDescriptionKey : @"the first frame has no time"}];
+        return NO;
+    }
     @try {
-        _writer.initialSegmentStartTime = time;
+        // Capture's clock counts from when the machine started. A recording
+        // counts from its first frame, in the joined file and in every
+        // piece, or whatever reads its times sees it start days in.
+        _writer.initialSegmentStartTime = kCMTimeZero;
         if (![_writer startWriting]) {
             if (error) *error = _writer.error;
             return NO;
         }
-        [_writer startSessionAtSourceTime:time];
+        [_writer startSessionAtSourceTime:kCMTimeZero];
     } @catch (NSException *e) {
         if (error) *error = [NSError errorWithDomain:@"onair" code:1 userInfo:@{NSLocalizedDescriptionKey : e.reason ?: e.name}];
         return NO;
     }
-    _start = time;
+    _origin = origin;
     _started = YES;
     return YES;
 }
@@ -91,11 +106,13 @@
     return input.isReadyForMoreMediaData;
 }
 
-- (BOOL)appendPicture:(CVPixelBufferRef)pixels at:(CMTime)time {
+- (BOOL)appendPicture:(CVPixelBufferRef)pixels at:(CMTime)taken {
     if (!_started || _writer.status != AVAssetWriterStatusWriting) return NO;
+    CMTime time = CMTimeSubtract(taken, _origin);
     // Time only moves forward in a track.
+    if (!CMTIME_IS_NUMERIC(time) || CMTimeCompare(time, kCMTimeZero) < 0) return NO;
     if (CMTIME_IS_VALID(_lastPicture) && CMTimeCompare(time, _lastPicture) <= 0) return NO;
-    if (CMTimeCompare(time, _start) < 0) return NO;
+    for (int track = 0; track < (int)_sound.count; track++) [self catchUp:track];
     if (![self ready:_picture]) {
         _droppedFrames++;
         return NO;
@@ -111,23 +128,52 @@
 
 - (BOOL)appendSound:(CMSampleBufferRef)samples track:(int)track {
     if (!_started || track < 0 || track >= (int)_sound.count || _writer.status != AVAssetWriterStatusWriting) return NO;
-    if (CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(samples), _start) < 0) return NO;
+    if (CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(samples), kCMTimeZero) < 0) return NO;
+    [_waiting[track] addObject:(__bridge id)samples];
+    return [self catchUp:track];
+}
+
+// CatchUp gives a track's input the sound waiting for it, in order, as far
+// as it will take it. Out of real time, as in the self-test, it waits for
+// the input. In real time it doesn't: what is left goes in with a later
+// buffer or picture, and only sound that has waited seconds is dropped.
+- (BOOL)catchUp:(int)track {
+    NSMutableArray *waiting = _waiting[track];
     AVAssetWriterInput *input = _sound[track];
-    if (![self ready:input]) {
+    while (waiting.count) {
+        if (![self ready:input]) {
+            if (!_realTime) return NO;
+            break;
+        }
+        BOOL ok = NO;
+        @try {
+            ok = [input appendSampleBuffer:(__bridge CMSampleBufferRef)waiting.firstObject];
+        } @catch (NSException *e) {
+        }
+        [waiting removeObjectAtIndex:0];
+        if (!ok) return NO;
+    }
+    while (waiting.count > kWaiting) {
+        [waiting removeObjectAtIndex:0];
         _droppedSound++;
-        return NO;
     }
-    @try {
-        return [input appendSampleBuffer:samples];
-    } @catch (NSException *e) {
-        return NO;
-    }
+    return YES;
 }
 
 - (void)finish:(void (^)(NSError *error))done {
     if (!_started || _writer.status != AVAssetWriterStatusWriting) {
         done(_writer.error);
         return;
+    }
+    // What still waits goes in now, given a moment at most, so Stop stays
+    // quick.
+    for (int track = 0; track < (int)_sound.count; track++) {
+        for (int i = 0; i < 1000 && [_waiting[track] count] && _writer.status == AVAssetWriterStatusWriting; i++) {
+            if (![self catchUp:track] && !_realTime) break;
+            if ([_waiting[track] count]) usleep(1000);
+        }
+        _droppedSound += (long)[_waiting[track] count];
+        [_waiting[track] removeAllObjects];
     }
     [_picture markAsFinished];
     for (AVAssetWriterInput *input in _sound) [input markAsFinished];

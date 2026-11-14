@@ -12,8 +12,14 @@
 // Tracks are added before the writer starts. A sound track's settings follow
 // the format its samples arrive in.
 - (int)addSoundTrack:(CMFormatDescriptionRef)format;
-- (BOOL)startAt:(CMTime)time error:(NSError **)error;
+// Start opens the writer. origin is when the first frame was taken, on
+// capture's clock: the recording starts there, at time zero.
+- (BOOL)startAt:(CMTime)origin error:(NSError **)error;
+// A picture's time is when it was taken, on capture's clock.
 - (BOOL)appendPicture:(CVPixelBufferRef)pixels at:(CMTime)time;
+// Sound comes on the recording's timeline, from zero, as the mixer hands it
+// on. What the writer isn't ready for waits, in order, rather than leave a
+// hole the track would close up.
 - (BOOL)appendSound:(CMSampleBufferRef)samples track:(int)track;
 - (void)finish:(void (^)(NSError *error))done;
 @end

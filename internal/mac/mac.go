@@ -35,6 +35,9 @@ const (
 	Started  = int(C.ONAIR_STARTED)
 	Finished = int(C.ONAIR_FINISHED)
 	Failed   = int(C.ONAIR_FAILED)
+	// MicrophoneFailed says capture didn't start because of the microphone,
+	// and isn't running.
+	MicrophoneFailed = int(C.ONAIR_MICROPHONE_FAILED)
 )
 
 // What Menu reports.
@@ -52,7 +55,7 @@ type Config struct {
 	FPS          int     // frames a second at most
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
-	Microphone   bool
+	Microphone   bool    // mix the microphone into the display's sound
 }
 
 var (
@@ -94,7 +97,8 @@ func onairMenu(action C.int) {
 	}
 }
 
-// Start asks for capture and returns at once: Started or Failed follows.
+// Start asks for capture and returns at once: Started, Failed or
+// MicrophoneFailed follows.
 func Start(c Config) {
 	microphone := C.int(0)
 	if c.Microphone {
@@ -108,7 +112,8 @@ func Start(c Config) {
 func Stop() { C.onair_stop() }
 
 // SelfTest writes segments from made-up frames and sound through the same
-// writer capture uses, and returns once the last one was handed over.
+// writer capture uses, each sound track straight to the writer, and returns
+// once the last one was handed over.
 func SelfTest(seconds float64, audioTracks int, pieceSeconds float64) error {
 	var message *C.char
 	if C.onair_selftest(C.double(seconds), C.int(audioTracks), C.double(pieceSeconds), &message) != 0 {
@@ -118,25 +123,86 @@ func SelfTest(seconds float64, audioTracks int, pieceSeconds float64) error {
 	return nil
 }
 
+// Mix is what SelfTestMix plays: the display's sound and the microphone,
+// made up and shaped like capture's.
+type Mix struct {
+	Seconds      float64
+	PieceSeconds float64
+	QuietFrom    float64 // when the microphone stops sending
+	QuietTo      float64 // and when it starts again
+	SwitchAt     float64 // when the microphone goes from 44.1 kHz to 48 kHz
+}
+
+// MixReport is what the mixer did in SelfTestMix.
+type MixReport struct {
+	Late, Early int // sound frames it left out
+	Handed      int // mixed buffers it handed to the writer
+	Dropped     int // of those, ones the writer refused
+}
+
+// SelfTestMix writes segments as SelfTest does, with the two sources mixed
+// into one sound track through the mixer capture uses.
+func SelfTestMix(m Mix) (MixReport, error) {
+	var report C.onair_mix_report
+	var message *C.char
+	plan := C.onair_mix{seconds: C.double(m.Seconds), pieceSeconds: C.double(m.PieceSeconds),
+		quietFrom: C.double(m.QuietFrom), quietTo: C.double(m.QuietTo), switchAt: C.double(m.SwitchAt)}
+	failed := C.onair_selftest_mix(plan, &report, &message) != 0
+	r := MixReport{Late: int(report.late), Early: int(report.early), Handed: int(report.handed), Dropped: int(report.dropped)}
+	if failed {
+		defer C.free(unsafe.Pointer(message))
+		return r, errors.New(C.GoString(message))
+	}
+	return r, nil
+}
+
 // Movie is what Probe read from a file.
 type Movie struct {
 	Seconds     float64
 	VideoTracks int
 	AudioTracks int
+	// Where the first picture and sound tracks start, in seconds.
+	VideoStart, AudioStart float64
 }
 
 // Probe reads a movie file's length and tracks, as a player would.
 func Probe(path string) (Movie, error) {
 	p := C.CString(path)
 	defer C.free(unsafe.Pointer(p))
-	var seconds C.double
-	var video, audio C.int
+	var movie C.onair_movie
 	var message *C.char
-	if C.onair_probe(p, &seconds, &video, &audio, &message) != 0 {
+	if C.onair_probe(p, &movie, &message) != 0 {
 		defer C.free(unsafe.Pointer(message))
 		return Movie{}, errors.New(C.GoString(message))
 	}
-	return Movie{Seconds: float64(seconds), VideoTracks: int(video), AudioTracks: int(audio)}, nil
+	return Movie{Seconds: float64(movie.seconds), VideoTracks: int(movie.videoTracks), AudioTracks: int(movie.audioTracks),
+		VideoStart: float64(movie.videoStart), AudioStart: float64(movie.audioStart)}, nil
+}
+
+// Sound is a movie's sound track, decoded as a player would.
+type Sound struct {
+	Samples []float32 // 48 kHz stereo, interleaved
+	// Start is when the first sample is played, in seconds from the first
+	// frame.
+	Start float64
+}
+
+// DecodeSound decodes a movie file's one sound track.
+func DecodeSound(path string) (Sound, error) {
+	p := C.CString(path)
+	defer C.free(unsafe.Pointer(p))
+	var samples *C.float
+	var frames C.long
+	var start C.double
+	var message *C.char
+	if C.onair_sound(p, &samples, &frames, &start, &message) != 0 {
+		defer C.free(unsafe.Pointer(message))
+		return Sound{}, errors.New(C.GoString(message))
+	}
+	defer C.free(unsafe.Pointer(samples))
+	out := make([]float32, 2*int(frames))
+	copy(out, unsafe.Slice((*float32)(unsafe.Pointer(samples)), len(out)))
+	return Sound{Samples: out, Start: float64(start)}, nil
 }
 
 // Run shows the menu-bar item and runs the app on the calling thread, which

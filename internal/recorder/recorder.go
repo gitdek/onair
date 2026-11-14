@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 
 // Edge is the part that touches the machine.
 type Edge interface {
-	// Start asks for capture. Started or Failed follows.
+	// Start asks for capture. Started, Failed or MicrophoneFailed follows.
 	Start(Config)
 	// Stop ends capture. Finished follows the last segment.
 	Stop()
@@ -33,7 +34,7 @@ type Config struct {
 	FPS          int     // frames a second at most
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
-	Microphone   bool
+	Microphone   bool    // mix the microphone into the display's sound
 }
 
 // Action is something chosen from the menu.
@@ -54,6 +55,9 @@ const (
 	Started Event = iota + 1
 	Finished
 	Failed
+	// MicrophoneFailed says capture didn't start because of the
+	// microphone, and isn't running.
+	MicrophoneFailed
 )
 
 type state int
@@ -83,6 +87,9 @@ type App struct {
 	last     string
 	note     string
 	quitting bool
+	// mic says why this recording has no microphone, when one was asked
+	// for and couldn't be had.
+	mic string
 }
 
 // New returns an App that keeps pieces under spoolDir and joined recordings
@@ -131,7 +138,7 @@ func (a *App) Menu(action Action) {
 			a.show()
 			return
 		}
-		a.rec, a.name, a.pieces, a.state, a.note = r, name, 0, starting, "Starting…"
+		a.rec, a.name, a.pieces, a.state, a.note, a.mic = r, name, 0, starting, "Starting…", ""
 		a.show()
 		a.edge.Start(a.config)
 	case Stop:
@@ -194,26 +201,66 @@ func (a *App) Event(event Event, message string) {
 	defer a.mu.Unlock()
 	switch event {
 	case Started:
-		if a.state == starting {
-			a.state, a.note = recording, ""
-			a.show()
+		if a.state != starting {
+			return
 		}
-	case Finished, Failed:
+		a.state, a.note = recording, micNote(a.mic)
+		// Quit came while capture was starting. What it has recorded is
+		// kept, as with a quit while recording.
+		if a.quitting {
+			a.state, a.note = stopping, "Finishing…"
+			a.show()
+			a.edge.Stop()
+			return
+		}
+		a.show()
+	case Finished, Failed, MicrophoneFailed:
+		if event == MicrophoneFailed && a.withoutMicrophone(message) {
+			return
+		}
 		if a.state == idle || a.state == joining || a.rec == nil {
 			return
 		}
 		why := ""
-		if event == Failed {
+		if event != Finished {
 			why = message
 		}
 		a.finish(why)
 	}
 }
 
+// withoutMicrophone starts capture again without the microphone, since the
+// display is worth recording without it, and says why. It does so once a
+// recording: capture that still doesn't start has failed, as any other
+// start can. The lock is held.
+func (a *App) withoutMicrophone(why string) bool {
+	if a.state != starting || !a.config.Microphone || a.mic != "" || a.quitting {
+		return false
+	}
+	if why == "" {
+		why = "no reason was given."
+	}
+	a.mic, a.note = why, "Starting without the microphone…"
+	a.show()
+	c := a.config
+	c.Microphone = false
+	a.edge.Start(c)
+	return true
+}
+
+// micNote is what the menu says while a recording runs without the
+// microphone it asked for.
+func micNote(why string) string {
+	if why == "" {
+		return ""
+	}
+	return "The microphone isn't being recorded: " + why
+}
+
 // finish joins the recording's pieces off the caller's thread, since a long
 // recording takes a while to copy and Stop mustn't wait for it (rule 10).
 func (a *App) finish(why string) {
-	r, name, kept := a.rec, a.name, a.note
+	r, name, kept, mic := a.rec, a.name, a.note, a.mic
 	a.rec, a.state = nil, joining
 	a.show()
 	go func() {
@@ -237,9 +284,13 @@ func (a *App) finish(why string) {
 		default:
 			a.last = joined.Path
 			a.note = ""
-			if kept != "" && kept != "Finishing…" {
+			if kept != "" && kept != "Finishing…" && kept != micNote(mic) {
 				a.note = kept
 			}
+		}
+		// A recording that was kept says if it has no microphone.
+		if mic != "" && !errors.Is(err, errNothing) {
+			a.note = strings.TrimSpace(a.note + " The microphone wasn't recorded: " + mic)
 		}
 		a.show()
 		if a.quitting {
