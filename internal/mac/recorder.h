@@ -19,7 +19,7 @@ typedef struct {
 // What onairEvent reports.
 enum {
     ONAIR_STARTED = 1,           // capture is running
-    ONAIR_FINISHED = 2,          // the last segment was handed over
+    ONAIR_FINISHED = 2,          // the last segment was handed over; the message says what was left out, if anything
     ONAIR_FAILED = 3,            // capture stopped or never started; the message says why
     ONAIR_MICROPHONE_FAILED = 4, // capture didn't start because of the microphone, and isn't running; the message says why
     ONAIR_TARGET_GONE = 5,       // capture didn't start because what it was asked to record isn't there, and isn't running
