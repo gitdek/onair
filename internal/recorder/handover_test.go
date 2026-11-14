@@ -2,12 +2,15 @@ package recorder
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gitdek/onair/internal/delivery"
 	"github.com/gitdek/onair/internal/spool"
 )
 
@@ -303,6 +306,25 @@ func TestAHandOverThatStoppedIsCarriedOnAtTheNextLaunch(t *testing.T) {
 	}
 	if names := list(t, folder); len(names) != 1 {
 		t.Fatalf("On the Record's folder holds %v", names)
+	}
+}
+
+// A hand-over stopped where the core's model doesn't go says where the
+// recording is safe, and that On Air can't carry the hand-over on by
+// itself, since carried on it stops there again. Any other step that
+// stopped is carried on at the next launch and when a folder is picked.
+func TestAStuckHandOverSaysOnAirCantCarryItOn(t *testing.T) {
+	rec := filepath.Join("spool", "2026-11-13 18.30.01")
+	r := delivery.Report{File: first, Folder: filepath.Join("folders", "On the Record"), Path: filepath.Join(rec, first),
+		Err: fmt.Errorf("the copy under the hidden name is gone: %w", delivery.ErrStuck)}
+	want := "Handing “" + first + "” to “On the Record” stopped: " + r.Err.Error() + ". It is safe in " + rec +
+		", and stays there: On Air can't carry this hand-over on by itself."
+	if got := word(r, filepath.Join("folders", "Elsewhere")); got != want {
+		t.Fatalf("a stuck hand-over says %q", got)
+	}
+	r.Err = errors.New("permission denied")
+	if got := word(r, filepath.Join("folders", "Elsewhere")); !strings.HasSuffix(got, "It is safe in "+rec+", and On Air carries on at the next launch and when a folder is picked.") {
+		t.Fatalf("a hand-over that stopped says %q", got)
 	}
 }
 

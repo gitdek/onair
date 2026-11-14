@@ -43,6 +43,10 @@ const (
 	chunk = 1 << 20
 )
 
+// ErrStuck says a run stopped where the core's model doesn't go. Carried
+// on, it stops there again, so the hand-over can't go on by itself.
+var ErrStuck = errors.New("the hand-over's core has no step from here")
+
 // errNameFreed says the core is stuck where its model never goes. A copy
 // can't take the recording's name because a file has it. The core then has
 // that file compared, and a file that is gone by then leaves it where it was,

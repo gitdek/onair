@@ -543,13 +543,42 @@ func TestANameTakenThenFreedStopsTheHandOver(t *testing.T) {
 		},
 	}}
 	r := p.run(s.fault, start)
-	if r.Delivered || r.Failed != "" || !errors.Is(r.Err, errNameFreed) || r.Path != p.own() || exists(p.final()) {
+	if r.Delivered || r.Failed != "" || !errors.Is(r.Err, errNameFreed) || !errors.Is(r.Err, ErrStuck) || r.Path != p.own() || exists(p.final()) {
 		t.Fatalf("the report: %+v", r)
 	}
 	p.untouched()
 	r = p.run(nil, start.Add(time.Hour))
-	if !errors.Is(r.Err, errNameFreed) || exists(p.final()) || !exists(p.own()) {
+	if !errors.Is(r.Err, errNameFreed) || !errors.Is(r.Err, ErrStuck) || exists(p.final()) || !exists(p.own()) {
 		t.Fatalf("carried on: %+v", r)
+	}
+}
+
+// A copy removed from under its hidden name before it is given its name
+// leaves the core nothing to give a name to, and no reply that says so.
+// The run stops and says so, rather than answering untruthfully. Every run
+// after it stops there too, whatever folder it is given, with On Air's own
+// copy kept and nothing in either folder touched.
+func TestACopyGoneBeforeItsNameStopsTheHandOver(t *testing.T) {
+	p := newPlace(t)
+	s := &trail{at: map[string]func() error{"do rename": func() error { return os.Remove(p.hidden()) }}}
+	r := p.run(s.fault, start)
+	if r.Delivered || r.Failed != "" || !errors.Is(r.Err, ErrStuck) || r.Path != p.own() || exists(p.final()) {
+		t.Fatalf("the report: %+v", r)
+	}
+	p.untouched()
+	elsewhere := filepath.Join(filepath.Dir(p.folder), "Elsewhere")
+	if err := os.Mkdir(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, folder := range []string{p.folder, elsewhere} {
+		r = p.runTo(nil, start.Add(time.Hour), folder)
+		if r.Delivered || !errors.Is(r.Err, ErrStuck) || r.Folder != p.folder || exists(p.final()) || !exists(p.own()) {
+			t.Fatalf("carried on, given %s: %+v", folder, r)
+		}
+	}
+	p.untouched()
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("the other folder holds %v", entries)
 	}
 }
 
