@@ -179,8 +179,7 @@ func (d *Delivery) Done() bool {
 // is tried again once, and so is a removal of On Air's own copy that had
 // failed. On Air's own copy is removed once Keep has passed, on the clock
 // now, since the folder was found to hold the recording.
-func (d *Delivery) Run(folder string, clock func() time.Time) Report {
-	now := clock()
+func (d *Delivery) Run(folder string, now func() time.Time) Report {
 	retry := d.kept.Core.Record.Outcome == handover.Failed
 	retryRemoval := d.kept.Core.Record.Cleanup == handover.CleanupFailed
 	handed := false
@@ -206,7 +205,8 @@ func (d *Delivery) Run(folder string, clock func() time.Time) Report {
 			next.Core, next.Result = moved, nil
 			delivered := moved.Record.Outcome == handover.HandedOver && rec.Outcome != handover.HandedOver
 			if delivered {
-				next.HandedOver, handed = now, true
+				// The days start now, however long the copy took.
+				next.HandedOver, handed = now(), true
 			}
 			if err := d.keep(next); err != nil {
 				return stop(err)
@@ -239,9 +239,9 @@ func (d *Delivery) Run(folder string, clock func() time.Time) Report {
 				return stop(errors.New("the hand-over's core asked for nothing"))
 			}
 		case rec.Cleanup == handover.Waiting:
-			if next.HandedOver.IsZero() {
-				next.HandedOver = now
-			} else if now.Sub(next.HandedOver) < Keep {
+			if at := now(); next.HandedOver.IsZero() {
+				next.HandedOver = at
+			} else if at.Sub(next.HandedOver) < Keep {
 				return stop(nil)
 			} else {
 				next.Core, _ = h.BeginRetention(true, true)
