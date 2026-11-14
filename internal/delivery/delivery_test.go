@@ -527,6 +527,38 @@ func TestANameTakenThenFreedStopsTheHandOver(t *testing.T) {
 	}
 }
 
+// The folder can be the recording's own directory in the spool, picked by
+// mistake or reached through a link. The file under the recording's name
+// there is On Air's own copy, which is never taken for the folder's: the
+// hand-over fails with the name taken, and the copy stays, days later too.
+// Given the folder On the Record watches, it goes there.
+func TestOnAirsOwnCopyIsNeverTakenForTheFolders(t *testing.T) {
+	for _, through := range []string{"the directory itself", "a link to it"} {
+		p := newPlace(t)
+		folder := p.spool
+		if through == "a link to it" {
+			folder = filepath.Join(filepath.Dir(p.folder), "Recordings")
+			if err := os.Symlink(p.spool, folder); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := p.runTo(nil, start, folder)
+		if r.Delivered || r.Handed || !strings.Contains(r.Failed, "different file has its name") || r.Path != p.own() {
+			t.Fatalf("through %s: %+v", through, r)
+		}
+		if r := p.runTo(nil, start.Add(Keep+time.Hour), folder); r.Delivered || r.Removed {
+			t.Fatalf("through %s, three days on: %+v", through, r)
+		}
+		if got, err := os.ReadFile(p.own()); err != nil || !bytes.Equal(got, p.movie) {
+			t.Fatalf("through %s, On Air's own copy: %d bytes, %v", through, len(got), err)
+		}
+		if got, _ := os.ReadFile(filepath.Join(p.spool, "piece-000001.mp4")); string(got) != "a piece" {
+			t.Fatalf("through %s, a piece is %q", through, got)
+		}
+		p.delivered(p.run(nil, start.Add(Keep+2*time.Hour)))
+	}
+}
+
 // A folder that isn't there fails the hand-over, which keeps On Air's own
 // copy and is tried again.
 func TestAFolderThatIsGoneFailsTheHandOver(t *testing.T) {

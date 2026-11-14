@@ -186,6 +186,47 @@ func TestAFailedHandOverIsSaidAndTriedAgain(t *testing.T) {
 	}
 }
 
+// A folder in On Air's spool, such as the directory the menu says a
+// recording is safe in, is never where recordings go. Picking one is
+// refused and said, the folder picked before stays, and the recording stays
+// in the spool, three days on too.
+func TestAFolderInOnAirsSpoolIsRefused(t *testing.T) {
+	f := newFixture(t)
+	folder := f.picks()
+	if err := os.Remove(folder); err != nil {
+		t.Fatal(err)
+	}
+	f.record(f.app, "one|")
+	f.app.Menu(Stop)
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	rec := f.recording()
+	own := filepath.Join(rec, first)
+	for _, picked := range []string{rec, f.spool} {
+		f.app.FolderChosen(picked)
+		f.idle(f.app)
+		if s := f.edge.latest(); !strings.HasPrefix(s.note, "“"+filepath.Base(picked)+"” is in On Air's spool, where it keeps its own copies, so recordings can't go there.") {
+			t.Fatalf("picking %s shows %+v", picked, s)
+		}
+		if c := f.edge.latestChoices(); c.Folder != "On the Record" {
+			t.Fatalf("picking %s, the menu offers %+v", picked, c)
+		}
+	}
+	var k struct {
+		Folder string `json:"folder"`
+	}
+	if b, err := os.ReadFile(f.settings); err != nil || json.Unmarshal(b, &k) != nil || k.Folder != folder {
+		t.Fatalf("the settings: %+v, %v", k, err)
+	}
+	f.at = f.at.Add(73 * time.Hour)
+	f.app.Tidy()
+	f.idle(f.app)
+	f.app = f.launch()
+	if got, _ := os.ReadFile(own); string(got) != "OPEN|one|" {
+		t.Fatalf("On Air's own copy holds %q", got)
+	}
+}
+
 // A file already under the recording's name is left exactly as it is, and
 // the menu says so.
 func TestAFileUnderTheRecordingsNameIsLeftAlone(t *testing.T) {
