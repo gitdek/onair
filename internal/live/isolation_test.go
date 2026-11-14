@@ -170,7 +170,20 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 			if f.answer != nil {
 				archive = &fakeArchive{answer: f.answer}
 			}
-			c := Start(fast, archive, f.screen, time.Now)
+			// A judge is chosen, and fails in its own way: slow, never
+			// answering, or panicking, by turns.
+			judge := &fakeJudge{verdict: func(ctx context.Context, r Round) (Verdict, error) {
+				switch len(r.Text) % 3 {
+				case 0:
+					<-ctx.Done()
+					return Verdict{}, ctx.Err()
+				case 1:
+					<-never
+				}
+				panic("the model broke")
+			}}
+			c := Start(fast, archive, f.screen, time.Now, map[string]Judge{"local": judge})
+			c.Judging("local")
 			got, files := session(t, func(e recorder.Edge) recorder.Edge { return Tap(e, c) }, words(c))
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("the recorder did something else with the live side:\n%s\n\nwithout it:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -187,7 +200,7 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 // capture records, and when a recording runs.
 func TestTheTapTellsTheLiveSideWhatTheRecorderDoes(t *testing.T) {
 	screen := &fakeScreen{}
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil)
 	dir := t.TempDir()
 	app := recorder.New(Tap(&edgeLog{dir: dir}, c), recorder.Config{PieceSeconds: 4}, filepath.Join(dir, "spool"), filepath.Join(dir, "out"), filepath.Join(dir, "settings.json"), time.Now)
 	app.Displays([]recorder.Display{{ID: "d1", Name: "Built-in", Width: 1512, Height: 982, Main: true}, {ID: "d2", Name: "Studio", Width: 2560, Height: 1440}})

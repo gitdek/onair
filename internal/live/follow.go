@@ -30,6 +30,14 @@ type follow struct {
 	shown map[string]time.Time // when each link was last put on the panel
 	links []Link               // on the panel, newest first
 
+	judging bool      // a judge is chosen
+	judged  time.Time // when the last round was asked
+	inRound int       // the round waiting for a verdict, or 0
+	rounds  int       // rounds asked so far, which number them
+	news    bool      // something new was said since the last round
+	calls   []call    // what the judge said, newest first, one of each kind
+	verdict string    // what went wrong asking the judge, if anything
+
 	speech    string // what is wrong with listening, if anything
 	transient bool   // and it goes once words are heard again
 	archive   string // what went wrong asking On the Record, if anything
@@ -51,9 +59,17 @@ func (f *follow) enable(on bool) (ask bool) {
 	ask = on && !f.on
 	f.on = on
 	if !on {
-		f.heard, f.fresh = nil, false
+		f.heard, f.fresh, f.news, f.calls = nil, false, false, nil
 	}
 	return ask
+}
+
+// judge says whether a judge is chosen. Without one, what it said goes.
+func (f *follow) judge(on bool) {
+	if !on {
+		f.calls, f.verdict, f.inRound = nil, "", 0
+	}
+	f.judging = on
 }
 
 // capturing notes what capture was last asked to record: the display the
@@ -72,6 +88,7 @@ func (f *follow) record(on bool, now time.Time) {
 	case on && !f.recording:
 		f.heard, f.fresh, f.links = nil, false, nil
 		f.asking, f.asked = 0, time.Time{}
+		f.news, f.calls, f.inRound, f.judged, f.verdict = false, nil, 0, time.Time{}, ""
 		f.speech, f.transient, f.archive, f.answered, f.dropped = "", false, "", "", ""
 	case !on && f.recording:
 		f.stopped = now
@@ -133,7 +150,7 @@ func (f *follow) hear(h Heard, now time.Time) {
 		h.Speaker = Others
 	}
 	f.heard = append(f.heard, h)
-	f.fresh = true
+	f.fresh, f.news = true, true
 	if f.transient {
 		f.speech, f.transient = "", false
 	}
@@ -217,6 +234,65 @@ func (f *follow) due(now time.Time) (text string, ask int, ok bool) {
 	return f.text(), f.asking, true
 }
 
+// roundDue says whether to ask the judge now, and what: while listening
+// with a judge chosen, once something new was said since the last round,
+// f.cfg.JudgeEvery after it, when the window holds f.cfg.Least words, and
+// never while a round waits for its verdict.
+func (f *follow) roundDue(now time.Time) (Round, int, bool) {
+	if !f.listening() || !f.judging || f.inRound != 0 || !f.news {
+		return Round{}, 0, false
+	}
+	if !f.judged.IsZero() && now.Sub(f.judged) < f.cfg.JudgeEvery {
+		return Round{}, 0, false
+	}
+	if all, _ := f.words(); all < f.cfg.Least {
+		return Round{}, 0, false
+	}
+	f.rounds++
+	f.inRound, f.judged, f.news = f.rounds, now, false
+	return Round{Text: f.text(), Records: append([]Link(nil), f.links...)}, f.inRound, true
+}
+
+// judgement takes a judge's verdict on a round. A topic that changed
+// clears the panel and starts a fresh minute. Otherwise what clears the
+// thresholds shows, the newest of each kind, for f.cfg.Hold.
+func (f *follow) judgement(round int, records []Link, v Verdict, err error, now time.Time) {
+	if round == 0 || round != f.inRound {
+		return
+	}
+	f.inRound = 0
+	if err != nil {
+		f.verdict = "Couldn't ask the model: " + sentence(err.Error())
+		return
+	}
+	f.verdict = ""
+	if v.Topic >= Thresholds.Topic {
+		f.links, f.calls, f.heard, f.fresh, f.news, f.answered = nil, nil, nil, false, false, ""
+		return
+	}
+	calls := verdictCalls(v, records, now)
+	kept := append([]call(nil), calls...)
+	for _, old := range f.calls {
+		replaced := false
+		for _, c := range calls {
+			replaced = replaced || c.kind == old.kind
+		}
+		if !replaced {
+			kept = append(kept, old)
+		}
+	}
+	f.calls = kept
+}
+
+// abandonRound gives up on a round whose verdict is late by a second.
+func (f *follow) abandonRound(now time.Time) {
+	if f.inRound == 0 || now.Sub(f.judged) <= f.cfg.JudgeTimeout+time.Second {
+		return
+	}
+	f.inRound = 0
+	f.verdict = fmt.Sprintf("Couldn't ask the model: it didn't answer within %s.", f.cfg.JudgeTimeout)
+}
+
 // answer takes On the Record's answer to a question. One that nothing
 // waits for any more is dropped.
 func (f *follow) answer(ask int, found Found, err error, now time.Time) {
@@ -290,6 +366,11 @@ func (f *follow) panel(now time.Time) Panel {
 		p.Links = nil
 		return p
 	}
+	for _, c := range f.calls {
+		if now.Sub(c.at) < f.cfg.Hold {
+			p.Calls = append(p.Calls, c.text)
+		}
+	}
 	if !f.recording {
 		p.Status = fmt.Sprintf("The recording stopped. These links go at %s.", f.stopped.Add(f.cfg.Linger).Format("15:04"))
 		return p
@@ -299,7 +380,7 @@ func (f *follow) panel(now time.Time) Panel {
 	if !f.leftOut {
 		lines = append(lines, "This recording started before Live Context was on, so the panel may be in it.")
 	}
-	lines = append(lines, f.archive, f.dropped)
+	lines = append(lines, f.archive, f.verdict, f.dropped)
 	if f.speech == "" || f.transient {
 		switch all, person := f.words(); {
 		case all == 0:

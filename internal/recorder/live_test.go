@@ -82,3 +82,27 @@ func TestLiveContextThatCantBeRememberedIsSaid(t *testing.T) {
 		t.Fatalf("settings that can't be written show %+v", s)
 	}
 }
+
+// Asking a local model about the call is off until chosen, remembered
+// beside the rest, and chosen again turns it off.
+func TestAskingALocalModelIsRemembered(t *testing.T) {
+	f := newFixture(t)
+	f.connected(builtIn)
+	if c := f.edge.latestChoices(); c.Judge != "" {
+		t.Fatalf("a model is asked before one is chosen: %q", c.Judge)
+	}
+	f.app.Menu(ToggleLive)
+	f.app.Menu(AskLocal)
+	again := f.newApp()
+	again.Displays([]Display{builtIn})
+	if c := f.edge.latestChoices(); c.Judge != Local || !c.Live {
+		t.Fatalf("after a relaunch the menu shows %+v", c)
+	}
+	again.Menu(AskLocal)
+	if c := f.edge.latestChoices(); c.Judge != "" || !c.Live {
+		t.Fatalf("chosen again, the menu shows %+v", c)
+	}
+	if b, err := os.ReadFile(f.settings); err != nil || strings.Contains(string(b), "judge") || !strings.Contains(string(b), `"live": true`) {
+		t.Fatalf("settings.json holds %s, %v", b, err)
+	}
+}

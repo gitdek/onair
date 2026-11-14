@@ -394,7 +394,7 @@ void onair_live_ask(void) {
 static atomic_long panelsAsked;
 static long panelsDone; // on the main thread
 
-void onair_live_show(int visible, const char *display, const char *status, const onair_link *links, int count) {
+void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_link *links, int count) {
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *list = [NSMutableArray array];
     for (int i = 0; i < count; i++) {
         [list addObject:@{
@@ -406,12 +406,14 @@ void onair_live_show(int visible, const char *display, const char *status, const
         }];
     }
     NSString *d = [NSString stringWithUTF8String:display ?: ""] ?: @"", *s = [NSString stringWithUTF8String:status ?: ""] ?: @"";
+    NSString *c = [NSString stringWithUTF8String:calls ?: ""] ?: @"";
+    NSArray<NSString *> *said = c.length ? [c componentsSeparatedByString:@"\n"] : @[];
     long asked = atomic_fetch_add(&panelsAsked, 1) + 1;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (asked <= panelsDone) return;
         panelsDone = asked;
         @try {
-            OAPanelShow(visible != 0, d, s, list);
+            OAPanelShow(visible != 0, d, s, said, list);
         } @catch (NSException *exception) {
         }
     });

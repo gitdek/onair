@@ -97,6 +97,7 @@ One Go app in two layers, and only one of them makes decisions.
 - [ ] **Milestone two.**
 - [ ] **Milestone three.**
   - [ ] A first, experimental live panel ([#18](https://github.com/gitdek/onair/issues/18)): speech recognized on the Mac, On the Record asked at its read-only door on the Mac, and its strongest links shown beside the call. Built, and waiting for its first try on a Mac.
+  - [ ] Typed questions about the call to a local model, d1-2B, on the Mac: a decision and where it stands, a difference from the record on the panel, and a change of topic. Built, and waiting for its first try on a call.
 
 ## Working here
 

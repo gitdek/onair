@@ -30,7 +30,10 @@ func (t tap) Show(recording bool, last, note string) {
 
 func (t tap) Choices(c recorder.Choices) {
 	t.Edge.Choices(c)
-	t.tell(func() { t.c.Enabled(c.Live) })
+	t.tell(func() {
+		t.c.Enabled(c.Live)
+		t.c.Judging(c.Judge)
+	})
 }
 
 // tell passes word to the live side, and keeps anything that goes wrong

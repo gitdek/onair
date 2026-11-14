@@ -5,8 +5,6 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
-
-	"github.com/gitdek/onair/internal/settings"
 )
 
 // Display is a connected display, as the edge sees it.
@@ -38,6 +36,7 @@ type Choices struct {
 	Window   string   // names the picked window, when there is one
 	Folder   string   // names the folder recordings go to
 	Live     bool     // whether Live Context is on
+	Judge    string   // the model asked about the call, or none
 }
 
 // Choice is a display in the menu.
@@ -174,7 +173,7 @@ func (a *App) canChoose() bool {
 func (a *App) remember(p picked) {
 	a.picked, a.note = p, ""
 	if a.settings != "" {
-		if err := settings.Save(a.settings, kept{picked: p, Folder: a.folder, Live: a.live}); err != nil {
+		if err := a.keep(); err != nil {
 			a.note = "On Air records this until it quits, but couldn't remember it: " + err.Error()
 		}
 	}
@@ -272,7 +271,7 @@ const ownFolder = "On Air's own folder, until one is picked"
 // choices is what the menu offers to record, and where recordings go. The
 // lock is held.
 func (a *App) choices() Choices {
-	c := Choices{Open: a.state == idle, Folder: ownFolder, Live: a.live}
+	c := Choices{Open: a.state == idle, Folder: ownFolder, Live: a.live, Judge: a.judge}
 	if a.folder != "" {
 		c.Folder = filepath.Base(a.folder)
 	}

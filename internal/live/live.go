@@ -98,6 +98,9 @@ type Panel struct {
 	// Status is a line or two on what the live side is doing, or what is
 	// wrong.
 	Status string
+	// Calls are what a judge said that cleared its thresholds, newest
+	// first, such as "Decision: agreed, at 15:04."
+	Calls []string
 	// Links are newest first.
 	Links []Link
 }
@@ -168,6 +171,10 @@ type Config struct {
 	Chunk   time.Duration // how often speech recognition hands over finished words
 	Linger  time.Duration // how long the panel stays after a recording stops, when it shows links
 	Tick    time.Duration // how often the controller looks at the clock
+
+	JudgeEvery   time.Duration // the least time between two rounds of typed questions
+	JudgeTimeout time.Duration // how long a round may take
+	Hold         time.Duration // how long what a judge said stays in the panel
 }
 
 // Defaults are the numbers On Air runs with.
@@ -182,4 +189,8 @@ var Defaults = Config{
 	Chunk:   15 * time.Second,
 	Linger:  2 * time.Minute,
 	Tick:    time.Second,
+
+	JudgeEvery:   10 * time.Second,
+	JudgeTimeout: 2 * time.Second,
+	Hold:         2 * time.Minute,
 }
