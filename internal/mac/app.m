@@ -9,7 +9,7 @@
 // what Go last told it to show.
 @interface OAApp : NSObject <NSApplicationDelegate, NSMenuDelegate>
 - (void)show:(BOOL)recording last:(NSString *)last note:(NSString *)note;
-- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder;
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder live:(BOOL)live;
 @end
 
 @implementation OAApp {
@@ -21,6 +21,7 @@
     BOOL _open;
     NSArray<NSDictionary *> *_displays;
     NSString *_area, *_window, *_folder;
+    BOOL _live;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
@@ -54,7 +55,8 @@
     [self draw];
 }
 
-- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder {
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder live:(BOOL)live {
+    _live = live;
     _open = open;
     _displays = displays;
     _area = area.length ? area : nil;
@@ -123,6 +125,10 @@
     [self add:menu title:@"Hand Recordings To" action:0 enabled:NO];
     if (_folder) [self add:menu title:_folder action:0 enabled:NO].state = NSControlStateValueOn;
     [self add:menu title:@"Choose Folder…" action:ONAIR_MENU_CHOOSE enabled:YES];
+    // The live panel, which shows while recording what the call connects
+    // to in On the Record, can be turned on or off at any time.
+    [menu addItem:[NSMenuItem separatorItem]];
+    [self add:menu title:@"Show Live Context" action:ONAIR_MENU_LIVE enabled:YES].state = _live ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem:[NSMenuItem separatorItem]];
     if (_last) [self add:menu title:[NSString stringWithFormat:@"Show “%@”", _last.lastPathComponent] action:ONAIR_MENU_LAST enabled:YES];
     [self add:menu title:@"Open Recordings Folder" action:ONAIR_MENU_FOLDER enabled:YES];
@@ -189,7 +195,7 @@ void onair_show(int recording, const char *last, const char *note) {
     });
 }
 
-void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder) {
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live) {
     NSMutableArray<NSDictionary *> *list = [NSMutableArray array];
     for (int i = 0; i < count; i++) {
         [list addObject:@{
@@ -204,7 +210,7 @@ void onair_choices(int open, const onair_choice *displays, int count, const char
     onMain(^{
         if (asked <= choicesDone) return;
         choicesDone = asked;
-        [app choices:open != 0 displays:list area:a window:w folder:f];
+        [app choices:open != 0 displays:list area:a window:w folder:f live:live != 0];
     });
 }
 
