@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "state": [
+    {
+      "id": "down",
+      "when": {
+        "eq": [
+          {
+            "var": "online"
+          },
+          "FALSE"
+        ]
+      },
+      "label": "On Air is down; saved recordings survive"
+    },
+    {
+      "id": "finishing",
+      "when": {
+        "not": {
+          "eq": [
+            {
+              "var": "finishing"
+            },
+            "{}"
+          ]
+        }
+      },
+      "label": "Finishing the next recording; a new capture may run"
+    },
+    {
+      "id": "waiting",
+      "when": {
+        "not": {
+          "eq": [
+            {
+              "var": "queue"
+            },
+            "<<>>"
+          ]
+        }
+      },
+      "label": "Capture has ended for good; finishing is queued"
+    },
+    {
+      "id": "live",
+      "when": true,
+      "label": "On Air is ready, capturing, or showing a saved end"
+    }
+  ],
+  "step": [
+    {
+      "id": "Start",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Start"
+        ]
+      },
+      "label": "Accept Start and save the recording"
+    },
+    {
+      "id": "RefuseStart",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "RefuseStart"
+        ]
+      },
+      "label": "Refuse Start and issue the menu notice"
+    },
+    {
+      "id": "Stop",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Stop"
+        ]
+      },
+      "label": "Save Stop and explain an automatic stop"
+    },
+    {
+      "id": "CaptureStarted",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "CaptureStarted"
+        ]
+      },
+      "label": "Capture starts; a restart issues a gap notice"
+    },
+    {
+      "id": "CaptureFailed",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "CaptureFailed"
+        ]
+      },
+      "label": "Capture cannot start; queue finishing"
+    },
+    {
+      "id": "RequestStop",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "RequestStop"
+        ]
+      },
+      "label": "Ask capture to stop after saving Stop"
+    },
+    {
+      "id": "CaptureEnded",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "CaptureEnded"
+        ]
+      },
+      "label": "Capture ends; keep Stop or prepare a restart"
+    },
+    {
+      "id": "ResumeOrClose",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "ResumeOrClose"
+        ]
+      },
+      "label": "Count and request a restart, or end capture for good"
+    },
+    {
+      "id": "RequestFinish",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "RequestFinish"
+        ]
+      },
+      "label": "Ask the caller to finish the oldest waiting recording"
+    },
+    {
+      "id": "FinishReported",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "FinishReported"
+        ]
+      },
+      "label": "Save the caller’s handed-over or kept result"
+    },
+    {
+      "id": "RequestEndNotice",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "RequestEndNotice"
+        ]
+      },
+      "label": "Ask the menu to show a saved end"
+    },
+    {
+      "id": "MenuSaid",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "MenuSaid"
+        ]
+      },
+      "label": "Confirm the end was displayed and remove its saved record"
+    },
+    {
+      "id": "Crash",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Crash"
+        ]
+      },
+      "label": "On Air dies; capture ends and saved records survive"
+    },
+    {
+      "id": "Launch",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Launch"
+        ]
+      },
+      "label": "Launch again from the saved record"
+    },
+    {
+      "id": "Idle",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Idle"
+        ]
+      },
+      "label": "Wait or ignore a stale callback"
+    },
+    {
+      "id": "all",
+      "when": true,
+      "label": "Advance the recording session"
+    }
+  ]
+}

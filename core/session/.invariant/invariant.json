@@ -1,0 +1,6 @@
+{
+  "name": "recording sessions",
+  "module": ".invariant/specs/RecordingSession.tla",
+  "code": "session",
+  "language": "go"
+}
