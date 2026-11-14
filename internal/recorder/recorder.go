@@ -53,7 +53,10 @@ type Event int
 
 const (
 	Started Event = iota + 1
+	// Finished says the last segment was handed over. Its message says
+	// what capture left out, if anything.
 	Finished
+	// Failed says capture stopped or never started. Its message says why.
 	Failed
 	// MicrophoneFailed says capture didn't start because of the
 	// microphone, and isn't running.
@@ -90,6 +93,11 @@ type App struct {
 	// mic says why this recording has no microphone, when one was asked
 	// for and couldn't be had.
 	mic string
+	// broken is set once one of this recording's pieces couldn't be
+	// written, and cut says so when that happened while capture was
+	// starting or stopping, when the menu hadn't said it yet.
+	broken bool
+	cut    string
 }
 
 // New returns an App that keeps pieces under spoolDir and joined recordings
@@ -104,18 +112,31 @@ func (a *App) Launched() {
 	left, err := spool.Unfinished(a.spool)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Each recording found is said, so one that was recovered doesn't hide
+	// another that couldn't be.
+	var notes []string
 	if err != nil {
-		a.note = "On Air couldn't read its own pieces: " + err.Error()
+		notes = append(notes, "On Air couldn't read its own pieces: "+err.Error())
 	}
+	recovered, kept := "", ""
 	for _, r := range left {
 		name := filepath.Base(r.Dir)
 		joined, err := a.join(r, name+" On Air (recovered).mp4")
 		if err != nil {
-			a.note = fmt.Sprintf("A recording that was cut short is safe in pieces, but joining it failed: %v", err)
+			kept = r.Dir
+			notes = append(notes, fmt.Sprintf("A recording that was cut short is safe in pieces in %s, but joining it failed: %v", r.Dir, err))
 			continue
 		}
-		a.last = joined.Path
-		a.note = fmt.Sprintf("Recovered a recording that was cut short: %s.", count(joined.Pieces, a.config.PieceSeconds))
+		recovered = joined.Path
+		notes = append(notes, fmt.Sprintf("Recovered a recording that was cut short: %s.", count(joined.Pieces, a.config.PieceSeconds)))
+	}
+	if recovered != "" {
+		a.last = recovered
+	} else if kept != "" {
+		a.last = kept
+	}
+	if len(notes) > 0 {
+		a.note = strings.Join(notes, " ")
 	}
 	a.show()
 }
@@ -139,6 +160,7 @@ func (a *App) Menu(action Action) {
 			return
 		}
 		a.rec, a.name, a.pieces, a.state, a.note, a.mic = r, name, 0, starting, "Starting…", ""
+		a.broken, a.cut = false, ""
 		a.show()
 		a.edge.Start(a.config)
 	case Stop:
@@ -174,7 +196,8 @@ func (a *App) Menu(action Action) {
 
 // Segment keeps a segment the writer handed over. A segment that can't be
 // kept ends the recording: what is on disk is whole, and nothing more would
-// be.
+// be. The menu says so at once while recording, and once the recording is
+// saved when capture was starting or stopping already.
 func (a *App) Segment(opening bool, data []byte) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -188,11 +211,17 @@ func (a *App) Segment(opening bool, data []byte) {
 		a.pieces++
 		err = a.rec.PutPiece(a.pieces, data)
 	}
-	if err != nil && a.state == recording {
-		a.state, a.note = stopping, "Recording stopped, because a piece couldn't be written: "+err.Error()
-		a.show()
-		a.edge.Stop()
+	if err == nil || a.broken {
+		return
 	}
+	a.broken = true
+	if a.state != recording {
+		a.cut = "The recording ends early, because a piece couldn't be written: " + err.Error()
+		return
+	}
+	a.state, a.note = stopping, "Recording stopped, because a piece couldn't be written: "+err.Error()
+	a.show()
+	a.edge.Stop()
 }
 
 // Event acts on what the edge reports about capture.
@@ -221,11 +250,13 @@ func (a *App) Event(event Event, message string) {
 		if a.state == idle || a.state == joining || a.rec == nil {
 			return
 		}
-		why := ""
-		if event != Finished {
-			why = message
+		// Capture's last word says why it stopped, or, when it finished as
+		// asked, what it left out, if anything.
+		why, left := message, ""
+		if event == Finished {
+			why, left = "", message
 		}
-		a.finish(why)
+		a.finish(why, left)
 	}
 }
 
@@ -259,8 +290,9 @@ func micNote(why string) string {
 
 // finish joins the recording's pieces off the caller's thread, since a long
 // recording takes a while to copy and Stop mustn't wait for it (rule 10).
-func (a *App) finish(why string) {
-	r, name, kept, mic := a.rec, a.name, a.note, a.mic
+// why is why capture stopped by itself, and left what it says it left out.
+func (a *App) finish(why, left string) {
+	r, name, kept, mic, cut := a.rec, a.name, a.note, a.mic, a.cut
 	a.rec, a.state = nil, joining
 	a.show()
 	go func() {
@@ -277,7 +309,10 @@ func (a *App) finish(why string) {
 				a.note = why
 			}
 		case err != nil:
-			a.note = fmt.Sprintf("The recording is safe in pieces, but joining it failed: %v", err)
+			// The pieces are the recording: say where they are, and let
+			// Show open their folder.
+			a.last = r.Dir
+			a.note = fmt.Sprintf("The recording is safe in pieces in %s, but joining it failed: %v", r.Dir, err)
 		case why != "":
 			a.last = joined.Path
 			a.note = fmt.Sprintf("Recording stopped by itself: %s What was recorded is saved: %s.", why, count(joined.Pieces, a.config.PieceSeconds))
@@ -288,9 +323,19 @@ func (a *App) finish(why string) {
 				a.note = kept
 			}
 		}
-		// A recording that was kept says if it has no microphone.
-		if mic != "" && !errors.Is(err, errNothing) {
-			a.note = strings.TrimSpace(a.note + " The microphone wasn't recorded: " + mic)
+		// A recording ended early by a piece that couldn't be written says
+		// so, and one that was kept says what capture left out of it and
+		// if it has no microphone.
+		if cut != "" {
+			a.note = strings.TrimSpace(a.note + " " + cut)
+		}
+		if !errors.Is(err, errNothing) {
+			if left != "" {
+				a.note = strings.TrimSpace(a.note + " Not all of it was written: " + left)
+			}
+			if mic != "" {
+				a.note = strings.TrimSpace(a.note + " The microphone wasn't recorded: " + mic)
+			}
 		}
 		a.show()
 		if a.quitting {

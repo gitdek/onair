@@ -269,15 +269,19 @@ static void report(int code, NSString *text) {
     _mixer = nil;
     [writer finish:^(NSError *error) {
         dispatch_async(self->_queue, ^{
+            // What the writer and the mixer left out, if anything, goes with
+            // the last word, so Go can say it.
+            long frames = writer.droppedFrames, sound = writer.droppedSound, mixed = mixer.late + mixer.early;
+            NSString *left = frames || sound || mixed ? [NSString stringWithFormat:@"%ld frames and %ld sound buffers were dropped, and %ld frames of sound came too late or too early to mix.", frames, sound, mixed] : nil;
             NSString *said = why;
             if (!said && error) said = [NSString stringWithFormat:@"the last piece wasn't written: %@", error.localizedDescription];
             if (said) {
-                [self end:said];
+                [self end:left ? [NSString stringWithFormat:@"%@ %@", said, left] : said];
                 return;
             }
             self->_ended = YES;
             [self letGo];
-            report(ONAIR_FINISHED, [NSString stringWithFormat:@"%ld frames and %ld sound buffers were dropped, and %ld frames of sound came too late or too early to mix", writer.droppedFrames, writer.droppedSound, mixer.late + mixer.early]);
+            report(ONAIR_FINISHED, left ?: @"");
         });
     }];
 }
