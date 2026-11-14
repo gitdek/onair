@@ -42,7 +42,7 @@ func fake(mode string) int {
 	say(map[string]any{"ready": true, "load_ms": 5})
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 64<<10), 1<<20)
-	for in.Scan() {
+	for asked := 1; in.Scan(); asked++ {
 		var req struct {
 			ID        int64          `json:"id"`
 			State     string         `json:"state"`
@@ -55,6 +55,11 @@ func fake(mode string) int {
 		case "dies":
 			fmt.Fprintln(os.Stderr, "Killed")
 			return 9
+		case "answers once":
+			if asked > 1 {
+				fmt.Fprintln(os.Stderr, "Killed")
+				return 9
+			}
 		case "fails":
 			say(map[string]any{"id": req.ID, "error": "ValueError: the state is too long"})
 			continue
@@ -153,6 +158,55 @@ func TestAHelperThatDiesIsStartedAgainThenGivenUpOn(t *testing.T) {
 	m.Close()
 	if _, err := loaded(t, m); err == nil || !strings.Contains(err.Error(), "stopped") {
 		t.Fatalf("after Close: %v", err)
+	}
+}
+
+// TestAHelperThatKeepsDyingAfterAnsweringIsGivenUpOn checks that the
+// starts are bounded however the helper dies: one that answers and then
+// dies, again and again, would otherwise load the model afresh every round
+// for the rest of a call.
+func TestAHelperThatKeepsDyingAfterAnsweringIsGivenUpOn(t *testing.T) {
+	m := faked("answers once")
+	defer m.Close()
+	for round := 1; round <= 4*startsAllowed; round++ {
+		if _, err := loaded(t, m); err != nil && strings.Contains(err.Error(), "On Air stopped trying") {
+			return
+		}
+	}
+	t.Fatalf("a helper that died after each answer was still started again after %d rounds", 4*startsAllowed)
+}
+
+// TestAHelperLeftUnaskedIsStopped checks that a helper nobody asks is
+// stopped by itself, not at the next question, which may never come: after
+// a call, with On Air running on, the model would otherwise stay in memory.
+// Stopping it isn't a failure, so the next question starts another.
+func TestAHelperLeftUnaskedIsStopped(t *testing.T) {
+	m := faked("answers")
+	defer m.Close()
+	if _, err := loaded(t, m); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	m.quiet = 200 * time.Millisecond
+	p := m.proc
+	m.mu.Unlock()
+	if _, err := judge(m, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for stopped := false; !stopped; {
+		select {
+		case _, open := <-p.lines:
+			stopped = !open
+		case <-deadline:
+			t.Fatal("a helper left unasked was still running")
+		}
+	}
+	m.mu.Lock()
+	m.quiet = idleQuit
+	m.mu.Unlock()
+	if v, err := loaded(t, m); err != nil || v.Decision != 0.9 {
+		t.Fatalf("after it was stopped for going unasked, the next question gave %+v, %v", v, err)
 	}
 }
 

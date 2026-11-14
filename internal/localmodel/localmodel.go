@@ -53,6 +53,7 @@ type Model struct {
 	gaveUp  bool
 	asked   int64
 	lastUse time.Time
+	quiet   time.Duration // how long it may go unasked: idleQuit, or less in a test
 }
 
 // New returns the model behind a helper run by python, the Python of the
@@ -62,7 +63,7 @@ func New(python string) *Model {
 	if home, err := os.UserHomeDir(); err == nil {
 		env = append(env, "HOME="+home)
 	}
-	return &Model{argv: []string{python, "-I", "-c", helper}, env: env, turn: make(chan struct{}, 1)}
+	return &Model{argv: []string{python, "-I", "-c", helper}, env: env, turn: make(chan struct{}, 1), quiet: idleQuit}
 }
 
 // helperProcess is one run of the helper.
@@ -173,7 +174,7 @@ func (m *Model) running() (*helperProcess, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.proc != nil {
-		if !m.lastUse.IsZero() && time.Since(m.lastUse) > idleQuit {
+		if !m.lastUse.IsZero() && time.Since(m.lastUse) > m.quiet {
 			m.proc.stop()
 			m.proc = nil
 		} else {
