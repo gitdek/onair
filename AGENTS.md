@@ -7,7 +7,7 @@ These are the rules for any coding agent working here.
 - Never import `internal/mac` from a file that builds on Linux. Every Go file in it carries `//go:build darwin`.
 - A rule that `docs/PRD.md` marks as proved gets a model and a proved core. Don't weaken a rule to make a proof or a test pass. Ask instead.
 - On Air writes only its own files: in its own spool directory, and in the folder it hands recordings to. It never changes or removes anything else in that folder.
-- Dependencies are a person's to add. Don't change `go.mod` to bring one in.
+- Dependencies are a person's to add. Don't change `go.mod` to bring one in. The app's one dependency is the hand-over core's tagged release, which the owner chose in #11: `github.com/gitdek/onair/core/handover`, pinned by hash in `go.sum`, which `.invariant/repository.json` declares. A change to the core needs a new tag, `core/handover/vX.Y.Z`, on a commit where the gate verified it, and the app moves to it in a change of its own. A tag is never moved or deleted once pushed.
 - Commits and pull requests are authored by @gitdek alone. Don't add `Co-Authored-By` lines or any other attribution.
 
 ## Commands
