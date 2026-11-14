@@ -18,6 +18,9 @@ type fakeEdge struct {
 	quits    int
 	revealed []string
 	shows    []shown
+	choices  Choices
+	areas    []string // displays an area was asked for on
+	windows  int      // times a window was asked for
 }
 
 type shown struct {
@@ -43,6 +46,13 @@ func (e *fakeEdge) Show(recording bool, last, note string) {
 	e.shows = append(e.shows, shown{recording, last, note})
 	e.mu.Unlock()
 }
+func (e *fakeEdge) Choices(c Choices) { e.mu.Lock(); e.choices = c; e.mu.Unlock() }
+func (e *fakeEdge) SelectArea(display string) {
+	e.mu.Lock()
+	e.areas = append(e.areas, display)
+	e.mu.Unlock()
+}
+func (e *fakeEdge) SelectWindow() { e.mu.Lock(); e.windows++; e.mu.Unlock() }
 func (e *fakeEdge) latest() shown {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -69,18 +79,21 @@ func (e *fakeEdge) microphones() []bool {
 }
 
 type fixture struct {
-	t      *testing.T
-	edge   *fakeEdge
-	app    *App
-	config Config
-	spool  string
-	out    string
+	t        *testing.T
+	edge     *fakeEdge
+	app      *App
+	config   Config
+	spool    string
+	out      string
+	settings string
+	at       time.Time // the clock, which a fresh process carries on
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	dir := t.TempDir()
-	f := &fixture{t: t, edge: &fakeEdge{}, config: Config{PieceSeconds: 4}, spool: filepath.Join(dir, "spool"), out: filepath.Join(dir, "recordings")}
+	f := &fixture{t: t, edge: &fakeEdge{}, config: Config{PieceSeconds: 4}, spool: filepath.Join(dir, "spool"), out: filepath.Join(dir, "recordings"),
+		settings: filepath.Join(dir, "settings.json"), at: time.Date(2026, 11, 13, 18, 30, 0, 0, time.UTC)}
 	f.app = f.newApp()
 	return f
 }
@@ -95,8 +108,7 @@ func withMicrophone(t *testing.T) *fixture {
 
 // newApp is a fresh process over the same directories.
 func (f *fixture) newApp() *App {
-	at := time.Date(2026, 11, 13, 18, 30, 0, 0, time.UTC)
-	return New(f.edge, f.config, f.spool, f.out, func() time.Time { at = at.Add(time.Second); return at })
+	return New(f.edge, f.config, f.spool, f.out, f.settings, func() time.Time { f.at = f.at.Add(time.Second); return f.at })
 }
 
 // idle waits for the join that follows a recording's end.

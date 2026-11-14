@@ -2,7 +2,7 @@
 
 On Air sits in the menu bar during a meeting and does two things. It gets the meeting on tape in a way that can't be lost, and hands the tape to On the Record, a meeting archive. And while the meeting happens, it follows the conversation, decides fast what matters, and shows what On the Record already holds about it.
 
-The decisions below were settled on 13 November 2026. Only milestone one is specified in full.
+The decisions below were settled on 13 November 2026, and decision 1 was changed on 14 November. Only milestone one is specified in full.
 
 ## The whole idea
 
@@ -56,7 +56,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 
 | # | Decision | Decided |
 | :-- | :-- | :-- |
-| 1 | What it records | The whole main display. Picking one window comes later. |
+| 1 | What it records | The display, the area of a display or the single window a person picks from the menu, and the whole main display until they pick. A display or an area is remembered; a window lasts until it closes or On Air quits. |
 | 2 | Sound | The call's sound and the microphone, mixed into one track, which is what On the Record's transcription and speaker naming read today. |
 | 3 | If On Air dies mid-meeting | It saves what it has and starts recording again at once, with a notice and the gap marked. |
 | 4 | A recording that runs long | It asks at 2 hours and stops at 4, unless told to keep going. |
@@ -71,7 +71,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 
 ## Milestone one: never lose a recording
 
-- **In the menu bar.** A dot at the top of the screen: grey when idle, red with a running clock while recording. One click gives Start, Stop, the last recording and any error. A keyboard shortcut starts and stops it too.
+- **In the menu bar.** A dot at the top of the screen: grey when idle, red with a running clock while recording. One click gives Start, Stop, what to record, the last recording and any error. A keyboard shortcut starts and stops it too.
 - **While recording.** Picture and sound go to disk in short pieces, a few seconds each, and every finished piece plays on its own. Nothing is held back for the end.
 - **At Stop.** On Air closes the last piece, which takes about a second however long the meeting ran. It then joins the pieces into one file and hands it to On the Record, where the meeting appears on the shelf by itself.
 - **If something dies.** If On Air, its recorder or the Mac stops mid-meeting, the pieces written so far are still there. When On Air comes back it carries on with the same recording, marks the gap and says so.
@@ -134,7 +134,7 @@ The live loop and the interface with On the Record are described under [The whol
 
 - Stopping by itself, calendar names, the lighter copy, trimming and the transcript: milestone two.
 - Anything live: milestone three.
-- Recording one window, pausing, and a second display.
+- Pausing, recording more than one display or window at once, and changing what is recorded while a recording runs.
 - Running on any Mac but the owner's. It isn't signed for anyone else to install.
 
 **What nothing here checks.** Whether macOS keeps delivering the picture and the sound, and whether they stay in step over a long call. The first hand check is the only guard on that, so it is worth repeating whenever macOS updates.

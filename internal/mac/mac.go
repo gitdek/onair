@@ -8,7 +8,7 @@ package mac
 
 /*
 #cgo CFLAGS: -fobjc-arc -Wno-deprecated-declarations
-#cgo LDFLAGS: -framework Foundation -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreAudio -framework AudioToolbox -framework ScreenCaptureKit -framework UniformTypeIdentifiers
+#cgo LDFLAGS: -framework Foundation -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreAudio -framework AudioToolbox -framework ScreenCaptureKit -framework UniformTypeIdentifiers -framework ColorSync
 #include <stdlib.h>
 #include "recorder.h"
 */
@@ -21,14 +21,34 @@ import (
 )
 
 // Handler receives what the edge reports. Segment and Event arrive on the
-// recorder's threads, and Menu on the main one.
+// recorder's threads, and the rest on the main one.
 type Handler interface {
 	// Segment is the opening segment when opening is true, and a media
 	// segment otherwise. The bytes are the handler's to keep.
 	Segment(opening bool, data []byte)
 	Event(code int, message string)
 	Menu(action int)
+	// Displays are the connected displays, when the app starts and
+	// whenever they change.
+	Displays([]Display)
+	// Pick is a display chosen from the menu.
+	Pick(id string)
+	// Area is an area drawn on a display, in its points from its top left.
+	Area(display string, area Area)
+	// Window names the window a person picked, which the edge keeps.
+	Window(name string)
 }
+
+// Display is a connected display.
+type Display struct {
+	ID            string // stays the same across launches and reconnections
+	Name          string
+	Width, Height float64 // in points
+	Main          bool    // the one with the menu bar
+}
+
+// Area is a part of a display, in its points from its top left.
+type Area struct{ X, Y, Width, Height float64 }
 
 // What Event reports.
 const (
@@ -38,6 +58,11 @@ const (
 	// MicrophoneFailed says capture didn't start because of the microphone,
 	// and isn't running.
 	MicrophoneFailed = int(C.ONAIR_MICROPHONE_FAILED)
+	// TargetGone says capture didn't start because what it was asked to
+	// record isn't there, and isn't running.
+	TargetGone   = int(C.ONAIR_TARGET_GONE)
+	WindowClosed = int(C.ONAIR_WINDOW_CLOSED)
+	PickerFailed = int(C.ONAIR_PICKER_FAILED)
 )
 
 // What Menu reports.
@@ -47,6 +72,9 @@ const (
 	MenuLast   = int(C.ONAIR_MENU_LAST)
 	MenuFolder = int(C.ONAIR_MENU_FOLDER)
 	MenuQuit   = int(C.ONAIR_MENU_QUIT)
+	MenuArea   = int(C.ONAIR_MENU_AREA)
+	MenuWhole  = int(C.ONAIR_MENU_WHOLE)
+	MenuWindow = int(C.ONAIR_MENU_WINDOW)
 )
 
 // Config is what a recording is asked to be.
@@ -56,6 +84,9 @@ type Config struct {
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
 	Microphone   bool    // mix the microphone into the display's sound
+	Window       bool    // record the picked window
+	Display      string  // otherwise this display, or the main one when empty
+	Area         Area    // an area of it, or all of it when it has no width
 }
 
 var (
@@ -97,15 +128,58 @@ func onairMenu(action C.int) {
 	}
 }
 
-// Start asks for capture and returns at once: Started, Failed or
-// MicrophoneFailed follows.
-func Start(c Config) {
-	microphone := C.int(0)
-	if c.Microphone {
-		microphone = 1
+//export onairDisplays
+func onairDisplays(list *C.onair_display, count C.int) {
+	h := current()
+	if h == nil {
+		return
 	}
+	var displays []Display
+	if count > 0 {
+		for _, d := range unsafe.Slice(list, int(count)) {
+			displays = append(displays, Display{ID: C.GoString(d.id), Name: C.GoString(d.name),
+				Width: float64(d.width), Height: float64(d.height), Main: d.main != 0})
+		}
+	}
+	h.Displays(displays)
+}
+
+//export onairPick
+func onairPick(id *C.char) {
+	if h := current(); h != nil {
+		h.Pick(C.GoString(id))
+	}
+}
+
+//export onairArea
+func onairArea(display *C.char, x, y, width, height C.double) {
+	if h := current(); h != nil {
+		h.Area(C.GoString(display), Area{X: float64(x), Y: float64(y), Width: float64(width), Height: float64(height)})
+	}
+}
+
+//export onairWindow
+func onairWindow(name *C.char) {
+	if h := current(); h != nil {
+		h.Window(C.GoString(name))
+	}
+}
+
+// Start asks for capture and returns at once: Started, Failed,
+// MicrophoneFailed or TargetGone follows.
+func Start(c Config) {
+	display := C.CString(c.Display)
+	defer C.free(unsafe.Pointer(display))
 	C.onair_start(C.onair_config{rows: C.int(c.Rows), fps: C.int(c.FPS), pieceSeconds: C.double(c.PieceSeconds),
-		videoBitrate: C.int(c.VideoBitrate), microphone: microphone})
+		videoBitrate: C.int(c.VideoBitrate), microphone: flag(c.Microphone), window: flag(c.Window), display: display,
+		areaX: C.double(c.Area.X), areaY: C.double(c.Area.Y), areaWidth: C.double(c.Area.Width), areaHeight: C.double(c.Area.Height)})
+}
+
+func flag(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Stop ends capture: Finished follows the last segment.
@@ -230,3 +304,50 @@ func Reveal(path string) {
 
 // Quit ends the app.
 func Quit() { C.onair_quit() }
+
+// Choice is a display, as the menu offers it.
+type Choice struct {
+	ID, Title string
+	Picked    bool
+}
+
+// Choices sets the part of the menu that picks what to record.
+func Choices(open bool, displays []Choice, area, window string) {
+	n := len(displays)
+	list := (*C.onair_choice)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_choice{}))))
+	defer C.free(unsafe.Pointer(list))
+	items := unsafe.Slice(list, max(n, 1))
+	for i, d := range displays {
+		items[i] = C.onair_choice{id: C.CString(d.ID), title: C.CString(d.Title), picked: flag(d.Picked)}
+	}
+	defer func() {
+		for i := range displays {
+			C.free(unsafe.Pointer(items[i].id))
+			C.free(unsafe.Pointer(items[i].title))
+		}
+	}()
+	a, w := C.CString(area), C.CString(window)
+	defer C.free(unsafe.Pointer(a))
+	defer C.free(unsafe.Pointer(w))
+	C.onair_choices(flag(open), list, C.int(n), a, w)
+}
+
+// SelectArea lets a person drag out an area of a display: Area follows,
+// unless they cancel.
+func SelectArea(display string) {
+	d := C.CString(display)
+	defer C.free(unsafe.Pointer(d))
+	C.onair_select_area(d)
+}
+
+// SelectWindow shows the system's picker for one window: Window follows,
+// unless they cancel.
+func SelectWindow() { C.onair_select_window() }
+
+// frameSize is the picture's size in pixels that capture takes for content
+// of a size in points at a scale.
+func frameSize(width, height, scale float64, rows int) (int, int) {
+	var w, h C.int
+	C.onair_frame_size(C.double(width), C.double(height), C.double(scale), C.int(rows), &w, &h)
+	return int(w), int(h)
+}

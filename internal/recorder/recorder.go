@@ -1,7 +1,7 @@
-// Package recorder decides what On Air does: when a recording starts and
-// stops, where its pieces go, what is joined, and what a kill left behind.
-// It touches no screen and no menu. An Edge does that and reports back, so
-// everything here runs and is tested without a Mac.
+// Package recorder decides what On Air does: what a recording captures,
+// when it starts and stops, where its pieces go, what is joined, and what a
+// kill left behind. It touches no screen and no menu. An Edge does that and
+// reports back, so everything here runs and is tested without a Mac.
 package recorder
 
 import (
@@ -9,21 +9,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/gitdek/onair/internal/settings"
 	"github.com/gitdek/onair/internal/spool"
 )
 
 // Edge is the part that touches the machine.
 type Edge interface {
-	// Start asks for capture. Started, Failed or MicrophoneFailed follows.
+	// Start asks for capture. Started, Failed, MicrophoneFailed or
+	// TargetGone follows.
 	Start(Config)
 	// Stop ends capture. Finished follows the last segment.
 	Stop()
 	// Show sets what the menu-bar item says.
 	Show(recording bool, last, note string)
+	// Choices sets the part of the menu that picks what to record.
+	Choices(Choices)
+	// SelectArea lets a person drag out an area of a display. AreaPicked
+	// follows, unless they cancel.
+	SelectArea(display string)
+	// SelectWindow lets a person pick a window, which the edge keeps.
+	// WindowPicked follows, unless they cancel.
+	SelectWindow()
 	Reveal(path string)
 	Quit()
 }
@@ -35,6 +44,7 @@ type Config struct {
 	PieceSeconds float64 // how long a piece is
 	VideoBitrate int     // bits a second
 	Microphone   bool    // mix the microphone into the display's sound
+	Target       Target  // what to capture
 }
 
 // Action is something chosen from the menu.
@@ -46,6 +56,9 @@ const (
 	ShowLast
 	OpenFolder
 	Quit
+	SelectArea
+	WholeDisplay
+	SelectWindow
 )
 
 // Event is something the edge reports about capture.
@@ -58,6 +71,13 @@ const (
 	// MicrophoneFailed says capture didn't start because of the
 	// microphone, and isn't running.
 	MicrophoneFailed
+	// TargetGone says capture didn't start because what it was asked to
+	// record isn't there, and isn't running.
+	TargetGone
+	// WindowClosed says the picked window closed.
+	WindowClosed
+	// PickerFailed says the window picker didn't open.
+	PickerFailed
 )
 
 type state int
@@ -73,11 +93,12 @@ const (
 // App is On Air's state: at most one recording at a time (docs/PRD.md,
 // rule 1), whose pieces are in the spool until they are joined.
 type App struct {
-	edge   Edge
-	config Config
-	spool  string
-	out    string
-	now    func() time.Time
+	edge     Edge
+	config   Config
+	spool    string
+	out      string
+	settings string
+	now      func() time.Time
 
 	mu       sync.Mutex
 	state    state
@@ -90,12 +111,26 @@ type App struct {
 	// mic says why this recording has no microphone, when one was asked
 	// for and couldn't be had.
 	mic string
+
+	displays []Display // connected, as the edge last reported
+	picked   picked    // the display and area to record, remembered
+	window   string    // the picked window's name, until it closes or On Air quits
+	asked    Config    // what this recording's last start asked for
+	fallback fallback  // why this recording isn't of what was picked
+	stopped  string    // why On Air stopped this recording itself
 }
 
-// New returns an App that keeps pieces under spoolDir and joined recordings
-// in outDir.
-func New(edge Edge, config Config, spoolDir, outDir string, now func() time.Time) *App {
-	return &App{edge: edge, config: config, spool: spoolDir, out: outDir, now: now}
+// New returns an App that keeps pieces under spoolDir, joined recordings in
+// outDir, and what to record in settingsFile.
+func New(edge Edge, config Config, spoolDir, outDir, settingsFile string, now func() time.Time) *App {
+	a := &App{edge: edge, config: config, spool: spoolDir, out: outDir, settings: settingsFile, now: now}
+	if settingsFile != "" {
+		if err := settings.Load(settingsFile, &a.picked); err != nil {
+			a.picked = picked{}
+			a.note = "On Air couldn't read what to record, so it records the main display: " + err.Error()
+		}
+	}
+	return a
 }
 
 // Launched joins what a kill left behind: every recording in the spool with
@@ -138,9 +173,13 @@ func (a *App) Menu(action Action) {
 			a.show()
 			return
 		}
-		a.rec, a.name, a.pieces, a.state, a.note, a.mic = r, name, 0, starting, "Starting…", ""
+		t, f := a.target()
+		a.rec, a.name, a.pieces, a.state, a.note = r, name, 0, starting, "Starting…"
+		a.mic, a.fallback, a.stopped = "", f, ""
+		a.asked = a.config
+		a.asked.Target = t
 		a.show()
-		a.edge.Start(a.config)
+		a.edge.Start(a.asked)
 	case Stop:
 		if a.state != recording {
 			return
@@ -155,6 +194,18 @@ func (a *App) Menu(action Action) {
 	case OpenFolder:
 		if err := os.MkdirAll(a.out, 0o755); err == nil {
 			a.edge.Reveal(a.out)
+		}
+	case SelectArea:
+		if a.canChoose() {
+			a.edge.SelectArea(a.areaDisplay())
+		}
+	case WholeDisplay:
+		if a.canChoose() {
+			a.remember(picked{Display: a.picked.Display})
+		}
+	case SelectWindow:
+		if a.canChoose() {
+			a.edge.SelectWindow()
 		}
 	case Quit:
 		if a.state == idle {
@@ -204,7 +255,7 @@ func (a *App) Event(event Event, message string) {
 		if a.state != starting {
 			return
 		}
-		a.state, a.note = recording, micNote(a.mic)
+		a.state, a.note = recording, a.recordingNote()
 		// Quit came while capture was starting. What it has recorded is
 		// kept, as with a quit while recording.
 		if a.quitting {
@@ -214,14 +265,31 @@ func (a *App) Event(event Event, message string) {
 			return
 		}
 		a.show()
-	case Finished, Failed, MicrophoneFailed:
+	case WindowClosed:
+		a.window = ""
+		// What was recorded of it is kept, as when capture stops by itself.
+		if a.state == recording && a.asked.Target.Window {
+			a.stopped = "the window being recorded closed."
+			a.state, a.note = stopping, "Finishing…"
+			a.show()
+			a.edge.Stop()
+			return
+		}
+		a.show()
+	case PickerFailed:
+		a.note = "The window picker didn't open: " + message
+		a.show()
+	case Finished, Failed, MicrophoneFailed, TargetGone:
 		if event == MicrophoneFailed && a.withoutMicrophone(message) {
+			return
+		}
+		if event == TargetGone && a.withoutTarget() {
 			return
 		}
 		if a.state == idle || a.state == joining || a.rec == nil {
 			return
 		}
-		why := ""
+		why := a.stopped
 		if event != Finished {
 			why = message
 		}
@@ -234,33 +302,34 @@ func (a *App) Event(event Event, message string) {
 // recording: capture that still doesn't start has failed, as any other
 // start can. The lock is held.
 func (a *App) withoutMicrophone(why string) bool {
-	if a.state != starting || !a.config.Microphone || a.mic != "" || a.quitting {
+	if a.state != starting || !a.asked.Microphone || a.mic != "" || a.quitting {
 		return false
 	}
 	if why == "" {
 		why = "no reason was given."
 	}
 	a.mic, a.note = why, "Starting without the microphone…"
+	a.asked.Microphone = false
 	a.show()
-	c := a.config
-	c.Microphone = false
-	a.edge.Start(c)
+	a.edge.Start(a.asked)
 	return true
 }
 
-// micNote is what the menu says while a recording runs without the
-// microphone it asked for.
-func micNote(why string) string {
-	if why == "" {
-		return ""
+// recordingNote is what the menu says while this recording runs: whether it
+// is of something else than was picked, and whether it lacks the
+// microphone. The lock is held.
+func (a *App) recordingNote() string {
+	mic := ""
+	if a.mic != "" {
+		mic = "The microphone isn't being recorded: " + a.mic
 	}
-	return "The microphone isn't being recorded: " + why
+	return join(a.fallback.now(), mic)
 }
 
 // finish joins the recording's pieces off the caller's thread, since a long
 // recording takes a while to copy and Stop mustn't wait for it (rule 10).
 func (a *App) finish(why string) {
-	r, name, kept, mic := a.rec, a.name, a.note, a.mic
+	r, name, kept, during, mic, f := a.rec, a.name, a.note, a.recordingNote(), a.mic, a.fallback
 	a.rec, a.state = nil, joining
 	a.show()
 	go func() {
@@ -284,13 +353,17 @@ func (a *App) finish(why string) {
 		default:
 			a.last = joined.Path
 			a.note = ""
-			if kept != "" && kept != "Finishing…" && kept != micNote(mic) {
+			if kept != "" && kept != "Finishing…" && kept != during {
 				a.note = kept
 			}
 		}
-		// A recording that was kept says if it has no microphone.
-		if mic != "" && !errors.Is(err, errNothing) {
-			a.note = strings.TrimSpace(a.note + " The microphone wasn't recorded: " + mic)
+		// A recording that was kept says if it isn't of what was picked,
+		// and if it has no microphone.
+		if !errors.Is(err, errNothing) {
+			if mic != "" {
+				mic = "The microphone wasn't recorded: " + mic
+			}
+			a.note = join(a.note, f.then(), mic)
 		}
 		a.show()
 		if a.quitting {
@@ -317,6 +390,7 @@ func (a *App) join(r *spool.Recording, file string) (spool.Joined, error) {
 // show tells the edge what to say. The lock is held.
 func (a *App) show() {
 	a.edge.Show(a.state == recording || a.state == stopping, a.last, a.note)
+	a.edge.Choices(a.choices())
 }
 
 // count says how much a number of pieces holds.
