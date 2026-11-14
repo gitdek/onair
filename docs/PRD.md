@@ -2,7 +2,7 @@
 
 On Air sits in the menu bar during a meeting and does two things. It gets the meeting on tape in a way that can't be lost, and hands the tape to On the Record, a meeting archive. And while the meeting happens, it follows the conversation, decides fast what matters, and shows what On the Record already holds about it.
 
-The decisions below were settled on 13 November 2026, and decision 1 was changed on 14 November. Only milestone one is specified in full.
+The decisions below were settled on 13 November 2026. Decision 1 and rule 9 were changed on 14 November. Only milestone one is specified in full.
 
 ## The whole idea
 
@@ -76,7 +76,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 - **At Stop.** On Air closes the last piece, which takes about a second however long the meeting ran. It then joins the pieces into one file and hands it to On the Record, where the meeting appears on the shelf by itself.
 - **If something dies.** If On Air, its recorder or the Mac stops mid-meeting, the pieces written so far are still there. When On Air comes back it carries on with the same recording, marks the gap and says so.
 - **If the disk runs low or the meeting runs long.** On Air won't start without room to spare, stops cleanly before the disk fills, and asks before a recording passes two hours.
-- **If the join fails.** The pieces are the recording. On Air hands over what plays and shows the error.
+- **If the join fails.** The pieces are the recording. They stay in On Air's spool, untouched, and nothing goes to On the Record until a join works, so it only ever gets one file for a recording. The menu says what failed and where the pieces are, and On Air tries the join again at the next launch and when the person asks from the menu. A piece that can't be read is left out of the join and stays in the spool, and the menu says how long the gap is.
 
 ## Rules that must always hold
 
@@ -90,7 +90,7 @@ macOS's own screen recorder writes a recording's index only when it stops, so a 
 | 6 | Each recording is handed over once. A retry after a crash never leaves two copies. | Proved |
 | 7 | On Air removes its own copy only after the file in the folder matches it byte for byte, and after the days in decision 7. | Proved |
 | 8 | On Air never starts with less than 20 GB free, and stops cleanly before free space falls below 10 GB. | Proved, and tested with a fake disk |
-| 9 | A failed join never costs the recording. The pieces that play are handed over instead, and the error is shown. | Proved, and tried by hand |
+| 9 | On Air never hands On the Record more than one file for a recording. A failed join never costs the recording: the pieces stay in On Air's spool, untouched and never removed while the recording is unjoined, the menu says what failed and where they are, and the join is tried again at the next launch and when the person asks. If a piece itself can't be read, the join leaves it out and the rest is handed over as one file, with the gap marked: the file jumps in time where the piece was, and the menu says how long. Pieces it couldn't read stay in the spool. | Proved, and tried by hand |
 | 10 | Stop takes about a second, however long the recording ran. | Tested with a fake recorder, and tried by hand |
 | 11 | In On the Record's folder On Air writes only its own files. It never changes or removes anything else there. | Tested |
 | 12 | On Air records only between Start and Stop, shows that it is recording the whole time, and sends nothing off the Mac. | Tried by hand. A test checks the core has no network code |
@@ -107,6 +107,7 @@ On Air is one Go app in two layers, and only one layer makes decisions.
 What On the Record needs from a finished recording:
 
 - A `.mp4` or `.mov` in the folder it watches. It ignores names that start with `.`, so On Air writes under such a name and renames the file when it is whole.
+- One file for each recording. It takes every video file in its folder for a meeting of its own, so a recording's pieces never go there.
 - A name that carries the date and a title, which On the Record reads off the file name.
 - Sound in the file, and name tiles sharp enough to read, since it names speakers from both.
 
@@ -119,7 +120,8 @@ Milestone one is done when these checks pass on the owner's Mac.
 3. Kill On Air and its recorder together, as a crash would. When On Air comes back, everything up to the last few seconds reaches On the Record without anyone doing anything.
 4. Hold the power button mid-recording, once. After the Mac restarts, the same is true.
 5. Record with the disk nearly full. On Air stops cleanly, hands over what it has, and says why.
-6. Press Stop on a two-hour recording, then break the join on purpose. The menu bar is back to idle in about a second. The pieces arrive in On the Record in place of the joined file, and On Air shows the error.
+6. Press Stop on a two-hour recording, then break the join on purpose. The menu bar is back to idle in about a second. Nothing reaches On the Record, the menu says what failed and where the pieces are, and every piece is still in the spool. Let the join work again and ask for it from the menu: one file arrives, and nothing else.
+7. Break the join of another recording the same way, damage one of its pieces, then let the join work and ask for it again. One file arrives, with a jump in time where that piece was, the menu says how long, and the damaged piece is still in the spool.
 
 ## Later milestones
 
