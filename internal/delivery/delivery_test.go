@@ -21,6 +21,9 @@ const file = "2026-11-14 10.00.00 On Air.mp4"
 // start is when the first run happens, on the clock the tests set.
 var start = time.Date(2026, 11, 14, 15, 0, 0, 0, time.UTC)
 
+// at is a clock that stays at t.
+func at(t time.Time) func() time.Time { return func() time.Time { return t } }
+
 // errKilled stops a run where a kill would.
 var errKilled = errors.New("killed")
 
@@ -162,7 +165,7 @@ func (p *place) run(fault func(string) error, now time.Time) Report {
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	return d.Run(p.folder, now)
+	return d.Run(p.folder, at(now))
 }
 
 // trail logs the points a run passes, and can act at one.
@@ -238,10 +241,33 @@ func TestARecordingIsHandedOverWholeAndOnAirsCopyGoesThreeDaysLater(t *testing.T
 	if !ok || err != nil || !d.Done() {
 		t.Fatalf("the record: %v, %v, %+v", ok, err, d)
 	}
-	r = d.Run(p.folder, start.Add(30*24*time.Hour))
+	r = d.Run(p.folder, at(start.Add(30*24*time.Hour)))
 	p.delivered(r)
 	if !r.Removed {
 		t.Fatalf("once done: %+v", r)
+	}
+}
+
+// The three days start when the folder is found to hold the recording, on
+// the clock then, however long the copy took to get there.
+func TestTheDaysStartWhenTheFolderHoldsTheRecording(t *testing.T) {
+	p := newPlace(t)
+	clock := start
+	slow := &trail{at: map[string]func() error{"copied": func() error {
+		// A long recording, copied to a slow disk.
+		clock = clock.Add(time.Hour)
+		return nil
+	}}}
+	d, err := p.prepare(slow.fault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.delivered(d.Run(p.folder, func() time.Time { return clock }))
+	if r := p.run(nil, start.Add(Keep)); r.Removed || !exists(p.own()) {
+		t.Fatalf("three days after the run began, before the folder held it for three: %+v", r)
+	}
+	if r := p.run(nil, start.Add(time.Hour+Keep)); !r.Removed || exists(p.own()) {
+		t.Fatalf("three days after the folder held it: %+v", r)
 	}
 }
 
@@ -303,7 +329,7 @@ func TestAKillAtEveryStepIsCarriedOnWithoutASecondCopy(t *testing.T) {
 			return nil
 		}
 		if d, err := p.prepare(fault); err == nil {
-			d.Run(p.folder, start)
+			d.Run(p.folder, at(start))
 		}
 		if killed == "" {
 			points = k - 1
@@ -699,7 +725,7 @@ func TestAnAttemptKeepsToItsFolder(t *testing.T) {
 			return errKilled
 		}
 		return nil
-	}); d.Run(p.folder, start).Err == nil {
+	}); d.Run(p.folder, at(start)).Err == nil {
 		t.Fatal("the kill didn't stop the run")
 	}
 	p.delivered(p.runTo(nil, start, other))
@@ -740,7 +766,7 @@ func (p *place) runTo(fault func(string) error, now time.Time, folder string) Re
 	if err != nil {
 		p.t.Fatal(err)
 	}
-	return d.Run(folder, now)
+	return d.Run(folder, at(now))
 }
 
 // A step that couldn't be carried out stops the run without telling the

@@ -177,9 +177,10 @@ func (d *Delivery) Done() bool {
 // now, and says where that left it. A new attempt hands the recording to
 // folder, and one under way keeps to its own. A hand-over that had failed
 // is tried again once, and so is a removal of On Air's own copy that had
-// failed. On Air's own copy is removed once Keep has passed, by now, since
-// the folder was found to hold the recording.
-func (d *Delivery) Run(folder string, now time.Time) Report {
+// failed. On Air's own copy is removed once Keep has passed, on the clock
+// now, since the folder was found to hold the recording.
+func (d *Delivery) Run(folder string, clock func() time.Time) Report {
+	now := clock()
 	retry := d.kept.Core.Record.Outcome == handover.Failed
 	retryRemoval := d.kept.Core.Record.Cleanup == handover.CleanupFailed
 	handed := false

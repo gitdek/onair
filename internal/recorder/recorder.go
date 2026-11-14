@@ -731,7 +731,7 @@ func (a *App) handOver(dirs []string) {
 	for _, dir := range dirs {
 		d, ok, err := delivery.Load(dir)
 		a.mu.Lock()
-		folder, now := a.destination(), a.now()
+		folder := a.destination()
 		if err != nil || !ok {
 			if err == nil {
 				err = errors.New("its record is gone")
@@ -753,7 +753,7 @@ func (a *App) handOver(dirs []string) {
 			// never is: one that is gone is for the hand-over to say.
 			os.MkdirAll(folder, 0o755)
 		}
-		r := d.Run(folder, now)
+		r := d.Run(folder, a.clock)
 		a.mu.Lock()
 		w := word(r, folder)
 		// Show follows the last recording to where it is now. After a
@@ -775,6 +775,13 @@ func (a *App) handOver(dirs []string) {
 	a.handing--
 	a.show()
 	a.mu.Unlock()
+}
+
+// clock is the time now, for a hand-over, which runs without the lock.
+func (a *App) clock() time.Time {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.now()
 }
 
 // word is what the menu says of how a run of a hand-over went, if anything.
