@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gitdek/onair/internal/spool"
 )
 
 // fakeEdge records what the app asked of the machine.
@@ -304,6 +306,84 @@ func TestAPieceThatCantBeWrittenStopsTheRecording(t *testing.T) {
 	}
 }
 
+// A piece that can't be written once Stop was pressed ends the recording
+// early. Nothing stops for it, since capture is stopping already, and the
+// menu says so once the recording is saved.
+func TestAPieceThatCantBeWrittenAfterStopIsSaid(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.app, "one|")
+	f.app.Menu(Stop)
+	dirs, _ := os.ReadDir(f.spool)
+	rec := filepath.Join(f.spool, dirs[0].Name())
+	if err := os.Chmod(rec, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(rec, 0o700)
+	f.app.Segment(false, []byte("two|"))
+	os.Chmod(rec, 0o700)
+	if _, stops, _ := f.edge.counts(); stops != 1 {
+		t.Fatalf("stop was asked %d times", stops)
+	}
+	f.app.Event(Finished, "")
+	f.idle(f.app)
+	names := f.files()
+	if len(names) != 1 {
+		t.Fatalf("recordings: %v", names)
+	}
+	if got, _ := os.ReadFile(filepath.Join(f.out, names[0])); string(got) != "OPEN|one|" {
+		t.Fatalf("the recording holds %q", got)
+	}
+	if s := f.edge.latest(); s.last != filepath.Join(f.out, names[0]) || !strings.Contains(s.note, "a piece couldn't be written") {
+		t.Fatalf("a last piece that couldn't be written shows %+v", s)
+	}
+}
+
+// What capture says it left out of a recording is said once it is saved.
+func TestWhatCaptureLeftOutIsSaid(t *testing.T) {
+	f := newFixture(t)
+	f.record(f.app, "one|")
+	f.app.Menu(Stop)
+	f.app.Event(Finished, "0 frames and 3 sound buffers were dropped, and 0 frames of sound came too late or too early to mix.")
+	f.idle(f.app)
+	if s := f.edge.latest(); s.last == "" || !strings.Contains(s.note, "3 sound buffers were dropped") {
+		t.Fatalf("what capture left out shows %+v", s)
+	}
+}
+
+// Every recording a launch finds is said, the ones it couldn't join with
+// where their pieces are, so one that is recovered doesn't hide another
+// that wasn't.
+func TestEveryRecoveryIsSaid(t *testing.T) {
+	f := newFixture(t)
+	// An older recording whose second piece isn't its own, which can't be
+	// joined.
+	bad, err := spool.Create(f.spool, "2026-11-13 18.00.00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.PutOpening([]byte("OPEN|")); err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.PutPiece(1, []byte("a|")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad.Dir, "piece-000002.mp4"), []byte("X|b|"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A newer one, killed.
+	f.record(f.app, "one|")
+	f.newApp().Launched()
+	names := f.files()
+	if len(names) != 1 || names[0] != "2026-11-13 18.30.01 On Air (recovered).mp4" {
+		t.Fatalf("recovered: %v", names)
+	}
+	s := f.edge.latest()
+	if s.last != filepath.Join(f.out, names[0]) || !strings.Contains(s.note, "safe in pieces in "+bad.Dir+",") ||
+		!strings.Contains(s.note, "Recovered a recording that was cut short: 1 piece, about 4s.") {
+		t.Fatalf("after recovery the dot shows %+v", s)
+	}
+}
+
 func TestAFailedJoinLeavesThePieces(t *testing.T) {
 	f := newFixture(t)
 	f.record(f.app, "one|")
@@ -314,12 +394,17 @@ func TestAFailedJoinLeavesThePieces(t *testing.T) {
 	f.app.Menu(Stop)
 	f.app.Event(Finished, "")
 	f.idle(f.app)
-	s := f.edge.latest()
-	if s.recording || s.last != "" || !strings.Contains(s.note, "safe in pieces") {
-		t.Fatalf("a failed join shows %+v", s)
-	}
 	dirs, _ := os.ReadDir(f.spool)
 	rec := filepath.Join(f.spool, dirs[0].Name())
+	// The menu says where the pieces are, and Show opens their folder.
+	s := f.edge.latest()
+	if s.recording || s.last != rec || !strings.Contains(s.note, "safe in pieces in "+rec+",") {
+		t.Fatalf("a failed join shows %+v", s)
+	}
+	f.app.Menu(ShowLast)
+	if len(f.edge.revealed) != 1 || f.edge.revealed[0] != rec {
+		t.Fatalf("revealed %v", f.edge.revealed)
+	}
 	if got, _ := os.ReadFile(filepath.Join(rec, "piece-000001.mp4")); string(got) != "OPEN|one|" {
 		t.Fatalf("the piece is %q", got)
 	}
