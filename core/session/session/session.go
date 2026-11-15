@@ -14,31 +14,28 @@ func New(capacity, retryLimit int) (s *Session) {
 	return &Session{Records: make([]Record, capacity), Queue: make([]int, capacity), Control: Control{Online: true, RetryLimit: retryLimit}}
 }
 
-// AnyRunning includes startup and the interval waiting for a restart.
-// @ requires acc(&s.Records, 1/2)
-// @ requires len(s.Records) <= MaxSize
-// @ requires forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> acc(&s.Records[j], 1/2)
-// @ ensures acc(&s.Records, 1/2)
-// @ ensures len(s.Records) == old(len(s.Records))
-// @ ensures forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> &s.Records[j] == old(&s.Records[j])
-// @ ensures forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> acc(&s.Records[j], 1/2) && s.Records[j] == old(s.Records[j])
-// @ ensures yes == (exists j int :: 0 <= j && j < len(s.Records) && IsRunning(s.Records[j]))
-func (s *Session) AnyRunning() (yes bool) {
+// runningIn is the index of a running record, startup and the wait for a
+// restart included, or -1 when none is running. It takes the slice by value
+// and each record whole, and gives the records back unchanged.
+// @ requires len(records) <= MaxSize
+// @ requires forall j int :: { &records[j] } 0 <= j && j < len(records) ==> acc(&records[j])
+// @ ensures forall j int :: { &records[j] } 0 <= j && j < len(records) ==> acc(&records[j]) && records[j] == old(records[j])
+// @ ensures -1 <= k && k < len(records)
+// @ ensures 0 <= k ==> IsRunning(records[k])
+// @ ensures k < 0 ==> forall j int :: { &records[j] } 0 <= j && j < len(records) ==> !IsRunning(records[j])
+func runningIn(records []Record) (k int) {
 	i := 0
-	// @ invariant acc(&s.Records, 1/2)
-	// @ invariant len(s.Records) == old(len(s.Records)) && len(s.Records) <= MaxSize
-	// @ invariant forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> &s.Records[j] == old(&s.Records[j])
-	// @ invariant forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> acc(&s.Records[j], 1/2) && s.Records[j] == old(s.Records[j])
-	// @ invariant 0 <= i && i <= len(s.Records)
-	// @ invariant forall j int :: { &s.Records[j] } 0 <= j && j < i ==> !IsRunning(s.Records[j])
-	// @ decreases len(s.Records)-i
-	for i < len(s.Records) {
-		if IsRunning(s.Records[i]) {
-			return true
+	// @ invariant forall j int :: { &records[j] } 0 <= j && j < len(records) ==> acc(&records[j]) && records[j] == old(records[j])
+	// @ invariant 0 <= i && i <= len(records) && len(records) <= MaxSize
+	// @ invariant forall j int :: { &records[j] } 0 <= j && j < i ==> !IsRunning(records[j])
+	// @ decreases len(records)-i
+	for i < len(records) {
+		if IsRunning(records[i]) {
+			return i
 		}
 		i++
 	}
-	return false
+	return -1
 }
 
 // Start accepts a fresh caller identity whenever capture is not running.
@@ -73,9 +70,12 @@ func (s *Session) Start(id int) (ok bool) {
 	if !s.Control.Online || s.Records[id-1].Phase != Absent {
 		return false
 	}
-	if s.AnyRunning() {
+	k := runningIn(s.Records)
+	if k >= 0 {
+		// @ assert IsRunning(old(s.Records[k]))
 		return false
 	}
+	// @ assert forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> !IsRunning(old(s.Records[j]))
 	s.Records[id-1] = FreshRecord()
 	s.Control.Capture = Capture{ID: id, Mode: StartMode, Target: id}
 	return true
@@ -113,9 +113,12 @@ func (s *Session) RefuseStart(id int) (menu Menu, ok bool) {
 	if !s.Control.Online || s.Records[id-1].Phase != Absent {
 		return Menu{}, false
 	}
-	if !s.AnyRunning() {
+	k := runningIn(s.Records)
+	if k < 0 {
+		// @ assert forall j int :: { &s.Records[j] } 0 <= j && j < len(s.Records) ==> !IsRunning(old(s.Records[j]))
 		return Menu{}, false
 	}
+	// @ assert IsRunning(old(s.Records[k]))
 	return Menu{Kind: RefusedMenu, ID: id}, true
 }
 
@@ -617,8 +620,9 @@ func (s *Session) Launch() (ok bool) {
 }
 
 // popQueue removes the FIFO head into fresh storage. Source and destination
-// are disjoint, so the standard copy contract proves the sequence shift without
-// an induction over the rest of the session state. Unused cells are zeroed.
+// are disjoint, so writing a new cell leaves every old cell as it was, and the
+// shift needs no induction over the rest of the session state. Unused cells
+// keep make's zero.
 // @ requires acc(&s.Queue) && acc(&s.Control.Count)
 // @ requires forall j int :: { &s.Queue[j] } 0 <= j && j < len(s.Queue) ==> acc(&s.Queue[j])
 // @ requires 0 < s.Control.Count && s.Control.Count <= len(s.Queue) && len(s.Queue) <= MaxSize
@@ -631,7 +635,18 @@ func (s *Session) popQueue() {
 	previous := s.Queue
 	n := s.Control.Count
 	next := make([]int, len(previous))
-	copy(next[:n-1], previous[1:n] /*@, 1/2 @*/)
+	i := 0
+	// @ invariant forall j int :: { &previous[j] } 0 <= j && j < len(previous) ==> acc(&previous[j], 1/2)
+	// @ invariant forall j int :: { &next[j] } 0 <= j && j < len(next) ==> acc(&next[j])
+	// @ invariant len(next) == len(previous) && 0 < n && n <= len(previous)
+	// @ invariant 0 <= i && i <= n-1
+	// @ invariant forall j int :: { previous[j] } 0 <= j && j < len(previous) ==> previous[j] == old(s.Queue[j])
+	// @ invariant forall j int :: { next[j] } 0 <= j && j < len(next) ==> next[j] == (j < i ? previous[j+1] : 0)
+	// @ decreases n-1-i
+	for i < n-1 {
+		next[i] = previous[i+1]
+		i++
+	}
 	s.Queue = next
 	s.Control.Count = n - 1
 }
