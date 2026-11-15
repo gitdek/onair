@@ -58,17 +58,12 @@ enum {
     ONAIR_LIVE_DIAG = 6,        // a line for the diagnostic log, of counts, kinds and codes only
 };
 
-// Which of capture's two sounds onair_live_listen recognizes.
-enum {
-    ONAIR_VOICE_CALL = 1, // the call's sound
-    ONAIR_VOICE_MIC = 2,  // the microphone
-};
-
-// Whose words onairHeard reports.
-enum {
-    ONAIR_SPEAKER_PERSON = 1, // the microphone: the person recording
-    ONAIR_SPEAKER_OTHERS = 2, // the call's sound: everyone else
-};
+// A word or so of a final result of speech recognition, as onairHeard
+// reports it.
+typedef struct {
+    const char *text;
+    double at, length; // when it was said, in seconds from the start of its request's sound
+} onair_segment;
 
 // A link the live panel shows.
 typedef struct {
@@ -182,11 +177,11 @@ void onair_reveal(const char *path);
 // ONAIR_LIVE_REFUSED follows.
 void onair_live_ask(void);
 // LiveListen starts or stops recognizing speech in capture's two sounds,
-// those of the ONAIR_VOICE_* in voices, on the Mac only, and returns at
-// once. While on, onairHeard reports the finished words of each sound
-// about every chunk seconds, and onairLive reports what goes wrong, and
-// what the diagnostic log counts.
-void onair_live_listen(int on, double chunk, int voices);
+// added into one, on the Mac only, and returns at once. While on,
+// onairHeard reports the finished words of about every chunk seconds of
+// sound, with how loud each of the two sounds was meanwhile, and onairLive
+// reports what goes wrong, and what the diagnostic log counts.
+void onair_live_listen(int on, double chunk);
 // LiveShow sets what the live panel shows, or hides it: a line under its
 // title, a status line, what a model said about the call, a line each, and
 // links. Any thread may call it.

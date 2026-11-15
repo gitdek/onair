@@ -118,6 +118,21 @@ func (c *Controller) Heard(h Heard) {
 	})
 }
 
+// Said takes a final result of speech recognition, decides whose each of
+// its words was, and hears each speaker's turn in it. It returns at once,
+// and a panic in it goes no further.
+func (c *Controller) Said(s Said) {
+	if c == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	turns := s.heard()
+	for _, h := range turns {
+		c.Heard(h)
+	}
+	c.log("%s", s.counts(turns))
+}
+
 // Report takes what the Mac says about listening.
 func (c *Controller) Report(p Problem, detail string) {
 	if c == nil {

@@ -97,7 +97,7 @@ One Go app in two layers, and only one of them makes decisions.
   - [ ] The milestone's hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand), among them a 60-minute call, a power loss, a full disk and a broken join.
 - [ ] **Milestone two.**
 - [ ] **Milestone three.**
-  - [ ] A first, experimental live panel ([#18](https://github.com/gitdek/onair/issues/18)): speech recognized on the Mac, On the Record asked at its read-only door on the Mac, and its strongest links shown beside the call. Built, and waiting for its first try on a Mac.
+  - [ ] A first, experimental live panel ([#18](https://github.com/gitdek/onair/issues/18)): speech recognized on the Mac, On the Record asked at its read-only door on the Mac, and its strongest links shown beside the call. Built, and tried once on a Mac, where it heard almost nothing: only one recognition runs at a time, so it now recognizes the two sounds as one, which waits for its next try.
   - [ ] Typed questions about the call to a local model, d1-2B, on the Mac: a decision and where it stands, a difference from the record on the panel, and a change of topic. Built, and waiting for its first try on a call.
 
 ## Working here

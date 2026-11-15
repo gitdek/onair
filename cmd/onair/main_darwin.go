@@ -67,7 +67,7 @@ func main() {
 	// The model asked about the call runs on this Mac, from the Python
 	// environment tools/setup-models makes in On Air's own folder.
 	judges := map[string]live.Judge{recorder.Local: localmodel.New(filepath.Join(support, "models", "venv", "bin", "python"))}
-	follow := live.Start(live.Defaults, door, screen{support: support}, time.Now, judges)
+	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges)
 	app := recorder.New(live.Tap(edge{}, follow), recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app, follow})
@@ -106,40 +106,12 @@ func (edge) Choices(c recorder.Choices) {
 	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder, c.Live, c.Judge)
 }
 
-// screen is the Mac, as the live side asks things of it. Support is On
-// Air's own folder.
-type screen struct{ support string }
+// screen is the Mac, as the live side asks things of it.
+type screen struct{}
 
-func (screen) Ask()            { mac.LiveAsk() }
-func (screen) Log(line string) { diag.Printf("%s", line) }
-func (s screen) Listen(on bool, chunk time.Duration) {
-	voices := mac.BothVoices
-	if on {
-		voices = s.voices()
-	}
-	mac.Listen(on, chunk.Seconds(), voices)
-}
-
-// voices is the sounds to recognize: both, unless a file in On Air's own
-// folder, live-mic-only or live-call-only, asks for one alone when a
-// recording starts, to see whether the two get in each other's way.
-func (s screen) voices() int {
-	mic, call := exists(filepath.Join(s.support, "live-mic-only")), exists(filepath.Join(s.support, "live-call-only"))
-	switch {
-	case mic && call:
-		diag.Printf("both live-mic-only and live-call-only are there, so both sounds are recognized")
-	case mic:
-		return mac.MicVoice
-	case call:
-		return mac.CallVoice
-	}
-	return mac.BothVoices
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
+func (screen) Ask()                                { mac.LiveAsk() }
+func (screen) Log(line string)                     { diag.Printf("%s", line) }
+func (screen) Listen(on bool, chunk time.Duration) { mac.Listen(on, chunk.Seconds()) }
 
 func (screen) Show(p live.Panel) {
 	var links []mac.Link
@@ -214,12 +186,14 @@ func (b bridge) Menu(action int) {
 	}
 }
 
-func (b bridge) Heard(speaker int, text string, from, to float64) {
-	who := live.Others
-	if speaker == mac.SpeakerPerson {
-		who = live.Person
+// Heard hands a final result of speech recognition to the live side,
+// which decides whose each word was.
+func (b bridge) Heard(s mac.Said) {
+	said := live.Said{Began: seconds(s.Began), Step: duration(s.Step), Mic: s.Mic, Call: s.Call}
+	for _, seg := range s.Segments {
+		said.Segments = append(said.Segments, live.Segment{Text: seg.Text, At: duration(seg.At), Length: duration(seg.Length)})
 	}
-	b.follow.Heard(live.Heard{Speaker: who, Text: text, From: seconds(from), To: seconds(to)})
+	b.follow.Said(said)
 }
 
 func (b bridge) Live(code int, message string) {
@@ -237,6 +211,15 @@ func (b bridge) Live(code int, message string) {
 	case mac.LiveDiag:
 		diag.Printf("%s", message)
 	}
+}
+
+// duration is a length of time given in seconds, and none when it can't be
+// right.
+func duration(s float64) time.Duration {
+	if math.IsNaN(s) || math.Abs(s) > 24*3600 {
+		return 0
+	}
+	return time.Duration(s * float64(time.Second))
 }
 
 // seconds is a time given in seconds since 1970.
@@ -283,15 +266,15 @@ func (c *collector) Segment(opening bool, data []byte) {
 	c.err = c.r.PutPiece(c.n, data)
 }
 
-func (c *collector) Event(int, string)                   {}
-func (c *collector) Menu(int)                            {}
-func (c *collector) Displays([]mac.Display)              {}
-func (c *collector) Pick(string)                         {}
-func (c *collector) Area(string, mac.Area)               {}
-func (c *collector) Window(string)                       {}
-func (c *collector) Folder(string)                       {}
-func (c *collector) Heard(int, string, float64, float64) {}
-func (c *collector) Live(int, string)                    {}
+func (c *collector) Event(int, string)      {}
+func (c *collector) Menu(int)               {}
+func (c *collector) Displays([]mac.Display) {}
+func (c *collector) Pick(string)            {}
+func (c *collector) Area(string, mac.Area)  {}
+func (c *collector) Window(string)          {}
+func (c *collector) Folder(string)          {}
+func (c *collector) Heard(mac.Said)         {}
+func (c *collector) Live(int, string)       {}
 
 func (c *collector) kept() (int, error) {
 	c.mu.Lock()

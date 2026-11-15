@@ -12,6 +12,7 @@ package mac
 #cgo LDFLAGS: -framework Foundation -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreAudio -framework AudioToolbox -framework ScreenCaptureKit -framework UniformTypeIdentifiers -framework ColorSync -framework Speech
 #include <stdlib.h>
 #include "recorder.h"
+#include "speechmix.h"
 */
 import "C"
 
@@ -41,10 +42,10 @@ type Handler interface {
 	Window(name string)
 	// Folder is the folder a person picked for recordings to go to.
 	Folder(path string)
-	// Heard is finished words from the live side's speech recognition: a
-	// speaker, SpeakerPerson or SpeakerOthers, and when they were said, in
-	// seconds since 1970. It arrives on recognition's own thread.
-	Heard(speaker int, text string, from, to float64)
+	// Heard is a final result of the live side's speech recognition, which
+	// hears the call's sound and the microphone added into one. It arrives
+	// on the live side's own thread.
+	Heard(Said)
 	// Live is what the live side's speech recognition reports, one of the
 	// Live codes. It arrives on the live side's own threads.
 	Live(code int, message string)
@@ -111,18 +112,27 @@ const (
 	LiveDiag = int(C.ONAIR_LIVE_DIAG)
 )
 
-// Which of capture's two sounds Listen recognizes.
-const (
-	CallVoice  = int(C.ONAIR_VOICE_CALL) // the call's sound
-	MicVoice   = int(C.ONAIR_VOICE_MIC)  // the microphone
-	BothVoices = CallVoice | MicVoice
-)
+// Said is a final result of speech recognition: its words, and how loud
+// each of the two sounds was while they were said, which the live side
+// decides whose they were by.
+type Said struct {
+	// Began is when the result's sound began, in seconds since 1970.
+	Began    float64
+	Segments []Segment
+	// Step is how long each step of loudness lasts, in seconds. The first
+	// starts at Began.
+	Step float64
+	// Mic and Call are each sound's loudness in each step: its RMS, from 0
+	// to 1 of full scale, before the two were added.
+	Mic, Call []float64
+}
 
-// Whose words Heard reports.
-const (
-	SpeakerPerson = int(C.ONAIR_SPEAKER_PERSON)
-	SpeakerOthers = int(C.ONAIR_SPEAKER_OTHERS)
-)
+// Segment is a word or so of a result, and when it was said, in seconds
+// from the start of the result's sound.
+type Segment struct {
+	Text       string
+	At, Length float64
+}
 
 // Config is what a recording is asked to be.
 type Config struct {
@@ -224,10 +234,26 @@ func onairFolder(path *C.char) {
 }
 
 //export onairHeard
-func onairHeard(speaker C.int, text *C.char, from, to C.double) {
-	if h := current(); h != nil {
-		h.Heard(int(speaker), C.GoString(text), float64(from), float64(to))
+func onairHeard(began C.double, segments *C.onair_segment, count C.int, step C.double, mic, call *C.double, steps C.int) {
+	h := current()
+	if h == nil {
+		return
 	}
+	s := Said{Began: float64(began), Step: float64(step)}
+	if segments != nil && count > 0 {
+		for _, seg := range unsafe.Slice(segments, int(count)) {
+			s.Segments = append(s.Segments, Segment{Text: C.GoString(seg.text), At: float64(seg.at), Length: float64(seg.length)})
+		}
+	}
+	if mic != nil && call != nil && steps > 0 {
+		for _, v := range unsafe.Slice(mic, int(steps)) {
+			s.Mic = append(s.Mic, float64(v))
+		}
+		for _, v := range unsafe.Slice(call, int(steps)) {
+			s.Call = append(s.Call, float64(v))
+		}
+	}
+	h.Heard(s)
 }
 
 //export onairLive
@@ -419,13 +445,10 @@ func Choices(open bool, displays []Choice, area, window, folder string, live boo
 // follows.
 func LiveAsk() { C.onair_live_ask() }
 
-// Listen starts or stops recognizing speech in capture's two sounds, those
-// of CallVoice and MicVoice in voices, on the Mac only, and returns at
-// once. While on, Heard reports the finished words of each about every
-// chunk seconds.
-func Listen(on bool, chunk float64, voices int) {
-	C.onair_live_listen(flag(on), C.double(chunk), C.int(voices))
-}
+// Listen starts or stops recognizing speech in capture's two sounds,
+// added into one, on the Mac only, and returns at once. While on, Heard
+// reports the finished words of about every chunk seconds of sound.
+func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chunk)) }
 
 // Link is a link the live panel shows.
 type Link struct{ Kind, Title, Date, Why, URL string }
@@ -482,4 +505,45 @@ func frameSize(width, height, scale float64, rows int) (int, int) {
 	var w, h C.int
 	C.onair_frame_size(C.double(width), C.double(height), C.double(scale), C.int(rows), &w, &h)
 	return int(w), int(h)
+}
+
+// A buffer of one of the two sounds, given to speechMix: the sound, 0 the
+// call's and 1 the microphone's, the frame its stamp puts it at, and its
+// frames.
+type mixBuffer struct {
+	sound  int
+	at     int
+	frames []float32
+}
+
+// speechMix runs the live side's mix of the two sounds at rate over
+// buffers, given in order, handing on what it can after each, and then up
+// to now, a frame on the timeline, unless now is negative. It returns what
+// it handed on, each sound's loudness in each step, and the frames it left
+// out as late and as early.
+func speechMix(rate int, buffers []mixBuffer, now int) (mix []float32, loud [][2]float32, late, early int) {
+	var m C.oa_speechmix
+	if C.oa_speechmix_init(&m, C.long(rate), 4) != 0 {
+		return nil, nil, 0, 0
+	}
+	defer C.oa_speechmix_free(&m)
+	out := make([]float32, int(m.step))
+	var l [2]C.float
+	take := func(now int) {
+		ready := C.oa_speechmix_ready(&m, C.long(now))
+		for C.oa_speechmix_take(&m, ready, (*C.float)(&out[0]), &l[0]) != 0 {
+			mix = append(mix, out...)
+			loud = append(loud, [2]float32{float32(l[0]), float32(l[1])})
+		}
+	}
+	for _, b := range buffers {
+		if len(b.frames) > 0 {
+			C.oa_speechmix_place(&m, C.int(b.sound), (*C.float)(&b.frames[0]), C.long(len(b.frames)), C.long(b.at))
+		}
+		take(-1)
+	}
+	if now >= 0 {
+		take(now)
+	}
+	return mix, loud, int(m.late), int(m.early)
 }
