@@ -2,7 +2,9 @@
 #import "writer.h"
 #import "mixer.h"
 #import "choose.h"
+#import "live.h"
 #import <AVFoundation/AVFoundation.h>
+#import <unistd.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import "_cgo_export.h"
@@ -115,7 +117,10 @@ static BOOL OAHasSound(CMSampleBufferRef samples) {
         });
         return;
     }
-    [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:YES completionHandler:^(SCShareableContent *content, NSError *error) {
+    // Leaving On Air's own windows out needs On Air among the apps listed,
+    // which only those with windows on screen are otherwise.
+    BOOL leaveOutOwn = cfg.leaveOutOwn != 0;
+    [SCShareableContent getShareableContentExcludingDesktopWindows:NO onScreenWindowsOnly:!leaveOutOwn completionHandler:^(SCShareableContent *content, NSError *error) {
         dispatch_async(self->_queue, ^{
             if (error || content.displays.count == 0) {
                 // Without the permission macOS answers with an error, having
@@ -141,7 +146,19 @@ static BOOL OAHasSound(CMSampleBufferRef samples) {
                     return;
                 }
             }
-            SCContentFilter *shown = [[SCContentFilter alloc] initWithDisplay:chosen excludingWindows:@[]];
+            SCContentFilter *shown = nil;
+            if (leaveOutOwn) {
+                // The live panel is kept out of other apps' captures, and of
+                // this one's by leaving out On Air itself, whose windows
+                // come and go as the recording runs.
+                for (SCRunningApplication *app in content.applications) {
+                    if (app.processID == getpid()) {
+                        shown = [[SCContentFilter alloc] initWithDisplay:chosen excludingApplications:@[ app ] exceptingWindows:@[]];
+                        break;
+                    }
+                }
+            }
+            if (!shown) shown = [[SCContentFilter alloc] initWithDisplay:chosen excludingWindows:@[]];
             CGSize size = CGRectIsNull(area) ? CGSizeMake(chosen.width, chosen.height) : area.size;
             [self microphoneThen:^{
                 [self begin:shown size:size scale:shown.pointPixelScale area:area];
@@ -255,6 +272,9 @@ static BOOL OAHasSound(CMSampleBufferRef samples) {
         // Sound before the first whole frame has no timeline yet, and is
         // left out.
         [_mixer add:samples source:type == SCStreamOutputTypeAudio ? 0 : 1];
+        // The live side gets a copy of each sound, kept apart, while it
+        // listens. It never holds this queue up.
+        OALiveHear(samples, type == SCStreamOutputTypeAudio ? OA_SOUND_CALL : OA_SOUND_MICROPHONE);
         return;
     }
     if (type != SCStreamOutputTypeScreen) return;

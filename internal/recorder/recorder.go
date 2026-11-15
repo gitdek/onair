@@ -58,6 +58,10 @@ type Config struct {
 	Microphone   bool    // mix the microphone into the display's sound
 	QuietSeconds float64 // how long capture waits for the microphone's sound before saying none came
 	Target       Target  // what to capture
+	// LeaveOutOwnWindows leaves On Air's own windows, such as the live
+	// panel, out of a display's picture. It is set while Live Context is
+	// on.
+	LeaveOutOwnWindows bool
 }
 
 // Action is something chosen from the menu.
@@ -73,7 +77,17 @@ const (
 	WholeDisplay
 	SelectWindow
 	ChooseFolder
+	// ToggleLive turns Live Context on or off: the panel that shows, while
+	// recording, what the call connects to in On the Record.
+	ToggleLive
+	// AskLocal turns on or off asking a model on this Mac typed questions
+	// about the call, while Live Context is on.
+	AskLocal
 )
+
+// Local names the model on this Mac, as Choices.Judge and the settings
+// name it.
+const Local = "local"
 
 // Event is something the edge reports about capture.
 type Event int
@@ -160,6 +174,8 @@ type App struct {
 	cut    string
 
 	folder string // the folder picked for recordings, remembered; empty until one is
+	live   bool   // whether Live Context is on, remembered; off until it is turned on
+	judge  string // the model asked about the call, remembered; none until one is chosen
 	// handed is what the menu says of hand-overs: the one under way, or how
 	// the last ones went. It follows the note, and a Start clears it.
 	handed string
@@ -174,6 +190,8 @@ type App struct {
 type kept struct {
 	picked
 	Folder string `json:"folder,omitempty"`
+	Live   bool   `json:"live,omitempty"`
+	Judge  string `json:"judge,omitempty"`
 }
 
 // New returns an App that keeps pieces under spoolDir, hands joined
@@ -186,7 +204,7 @@ func New(edge Edge, config Config, spoolDir, outDir, settingsFile string, now fu
 		if err := settings.Load(settingsFile, &k); err != nil {
 			a.note = "On Air couldn't read what to record or where recordings go, so it records the main display and hands recordings to its own folder: " + err.Error()
 		} else {
-			a.picked, a.folder = k.picked, k.Folder
+			a.picked, a.folder, a.live, a.judge = k.picked, k.Folder, k.Live, k.Judge
 		}
 	}
 	return a
@@ -269,6 +287,7 @@ func (a *App) Menu(action Action) {
 		a.broken, a.cut = false, ""
 		a.asked = a.config
 		a.asked.Target = t
+		a.asked.LeaveOutOwnWindows = a.live
 		// The microphone is asked for before capture starts, so that a
 		// question from macOS is answered before anything is recorded, and
 		// the recording starts once it is.
@@ -317,6 +336,25 @@ func (a *App) Menu(action Action) {
 		if a.canChoose() {
 			a.edge.SelectWindow()
 		}
+	case ToggleLive:
+		// It can be turned on or off at any time, recording or not, and
+		// says nothing in the menu: what goes wrong on the live side shows
+		// in its panel.
+		a.live = !a.live
+		if err := a.keep(); err != nil {
+			a.note = "On Air keeps Live Context as it is until it quits, but couldn't remember it: " + err.Error()
+		}
+		a.show()
+	case AskLocal:
+		if a.judge == Local {
+			a.judge = ""
+		} else {
+			a.judge = Local
+		}
+		if err := a.keep(); err != nil {
+			a.note = "On Air keeps asking the model as it is until it quits, but couldn't remember it: " + err.Error()
+		}
+		a.show()
 	case Quit:
 		if a.state == idle {
 			a.edge.Quit()
@@ -635,7 +673,7 @@ func (a *App) FolderChosen(path string) {
 		a.note = ""
 	}
 	if a.settings != "" {
-		if err := settings.Save(a.settings, kept{picked: a.picked, Folder: path}); err != nil {
+		if err := a.keep(); err != nil {
 			a.note = "On Air hands recordings to this folder until it quits, but couldn't remember it: " + err.Error()
 		}
 	}
@@ -806,6 +844,14 @@ func word(r delivery.Report, folder string) string {
 		return fmt.Sprintf("Removing On Air's own copy of “%s” stopped: %v. It tries again later.", r.File, r.Err)
 	}
 	return ""
+}
+
+// keep writes what is remembered to the settings file. The lock is held.
+func (a *App) keep() error {
+	if a.settings == "" {
+		return nil
+	}
+	return settings.Save(a.settings, kept{picked: a.picked, Folder: a.folder, Live: a.live, Judge: a.judge})
 }
 
 // show tells the edge what to say. The lock is held.

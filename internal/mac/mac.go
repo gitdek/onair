@@ -1,14 +1,15 @@
 //go:build darwin
 
 // Package mac is the part of On Air that touches macOS: the menu-bar item,
-// the screen and sound capture, and the writer that cuts them into
-// segments. It decides nothing. What happens there reaches Go through a
-// Handler, and Go tells it what to show.
+// the screen and sound capture, the writer that cuts them into segments,
+// and the live side's speech recognition and panel. It decides nothing.
+// What happens there reaches Go through a Handler, and Go tells it what to
+// show.
 package mac
 
 /*
 #cgo CFLAGS: -fobjc-arc -Wno-deprecated-declarations
-#cgo LDFLAGS: -framework Foundation -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreAudio -framework AudioToolbox -framework ScreenCaptureKit -framework UniformTypeIdentifiers -framework ColorSync
+#cgo LDFLAGS: -framework Foundation -framework AppKit -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework CoreAudio -framework AudioToolbox -framework ScreenCaptureKit -framework UniformTypeIdentifiers -framework ColorSync -framework Speech
 #include <stdlib.h>
 #include "recorder.h"
 */
@@ -16,6 +17,7 @@ import "C"
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -39,6 +41,13 @@ type Handler interface {
 	Window(name string)
 	// Folder is the folder a person picked for recordings to go to.
 	Folder(path string)
+	// Heard is finished words from the live side's speech recognition: a
+	// speaker, SpeakerPerson or SpeakerOthers, and when they were said, in
+	// seconds since 1970. It arrives on recognition's own thread.
+	Heard(speaker int, text string, from, to float64)
+	// Live is what the live side's speech recognition reports, one of the
+	// Live codes. It arrives on the live side's own threads.
+	Live(code int, message string)
 }
 
 // Display is a connected display.
@@ -86,6 +95,23 @@ const (
 	MenuWhole  = int(C.ONAIR_MENU_WHOLE)
 	MenuWindow = int(C.ONAIR_MENU_WINDOW)
 	MenuChoose = int(C.ONAIR_MENU_CHOOSE)
+	MenuLive   = int(C.ONAIR_MENU_LIVE)
+	MenuLocal  = int(C.ONAIR_MENU_LOCAL)
+)
+
+// What Live reports.
+const (
+	LiveAllowed     = int(C.ONAIR_LIVE_ALLOWED)
+	LiveRefused     = int(C.ONAIR_LIVE_REFUSED)
+	LiveUnsupported = int(C.ONAIR_LIVE_UNSUPPORTED)
+	LiveFailed      = int(C.ONAIR_LIVE_FAILED)
+	LiveDropped     = int(C.ONAIR_LIVE_DROPPED)
+)
+
+// Whose words Heard reports.
+const (
+	SpeakerPerson = int(C.ONAIR_SPEAKER_PERSON)
+	SpeakerOthers = int(C.ONAIR_SPEAKER_OTHERS)
 )
 
 // Config is what a recording is asked to be.
@@ -99,6 +125,9 @@ type Config struct {
 	Window       bool    // record the picked window
 	Display      string  // otherwise this display, or the main one when empty
 	Area         Area    // an area of it, or all of it when it has no width
+	// LeaveOutOwnWindows leaves On Air's own windows, such as the live
+	// panel, out of a display's picture.
+	LeaveOutOwnWindows bool
 }
 
 var (
@@ -184,6 +213,20 @@ func onairFolder(path *C.char) {
 	}
 }
 
+//export onairHeard
+func onairHeard(speaker C.int, text *C.char, from, to C.double) {
+	if h := current(); h != nil {
+		h.Heard(int(speaker), C.GoString(text), float64(from), float64(to))
+	}
+}
+
+//export onairLive
+func onairLive(code C.int, message *C.char) {
+	if h := current(); h != nil {
+		h.Live(int(code), C.GoString(message))
+	}
+}
+
 // Start asks for capture and returns at once: Started, Failed,
 // MicrophoneFailed or TargetGone follows.
 func Start(c Config) {
@@ -191,7 +234,8 @@ func Start(c Config) {
 	defer C.free(unsafe.Pointer(display))
 	C.onair_start(C.onair_config{rows: C.int(c.Rows), fps: C.int(c.FPS), pieceSeconds: C.double(c.PieceSeconds),
 		videoBitrate: C.int(c.VideoBitrate), microphone: flag(c.Microphone), quietSeconds: C.double(c.QuietSeconds), window: flag(c.Window), display: display,
-		areaX: C.double(c.Area.X), areaY: C.double(c.Area.Y), areaWidth: C.double(c.Area.Width), areaHeight: C.double(c.Area.Height)})
+		areaX: C.double(c.Area.X), areaY: C.double(c.Area.Y), areaWidth: C.double(c.Area.Width), areaHeight: C.double(c.Area.Height),
+		leaveOutOwn: flag(c.LeaveOutOwnWindows)})
 }
 
 func flag(b bool) C.int {
@@ -335,9 +379,10 @@ type Choice struct {
 	Picked    bool
 }
 
-// Choices sets the part of the menu that picks what to record, and names
-// the folder recordings go to.
-func Choices(open bool, displays []Choice, area, window, folder string) {
+// Choices sets the part of the menu that picks what to record, names the
+// folder recordings go to, says whether Live Context is on, and names the
+// model asked about the call, if any.
+func Choices(open bool, displays []Choice, area, window, folder string, live bool, judge string) {
 	n := len(displays)
 	list := (*C.onair_choice)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_choice{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -351,11 +396,51 @@ func Choices(open bool, displays []Choice, area, window, folder string) {
 			C.free(unsafe.Pointer(items[i].title))
 		}
 	}()
-	a, w, f := C.CString(area), C.CString(window), C.CString(folder)
+	a, w, f, j := C.CString(area), C.CString(window), C.CString(folder), C.CString(judge)
 	defer C.free(unsafe.Pointer(a))
 	defer C.free(unsafe.Pointer(w))
 	defer C.free(unsafe.Pointer(f))
-	C.onair_choices(flag(open), list, C.int(n), a, w, f)
+	defer C.free(unsafe.Pointer(j))
+	C.onair_choices(flag(open), list, C.int(n), a, w, f, flag(live), j)
+}
+
+// LiveAsk asks whether On Air may recognize speech, which macOS asks the
+// person the first time, and returns at once: LiveAllowed or LiveRefused
+// follows.
+func LiveAsk() { C.onair_live_ask() }
+
+// Listen starts or stops recognizing speech in capture's two sounds, on
+// the Mac only, and returns at once. While on, Heard reports the finished
+// words of each about every chunk seconds.
+func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chunk)) }
+
+// Link is a link the live panel shows.
+type Link struct{ Kind, Title, Date, Why, URL string }
+
+// ShowPanel sets what the live panel shows, beside a display named as
+// Display.ID names it, or the main one when empty: a status line, what a
+// model said, a line each, and links. It hides the panel when visible is
+// false, and returns at once.
+func ShowPanel(visible bool, display, status string, calls []string, links []Link) {
+	n := len(links)
+	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
+	defer C.free(unsafe.Pointer(list))
+	items := unsafe.Slice(list, max(n, 1))
+	var strs []*C.char
+	str := func(s string) *C.char {
+		c := C.CString(s)
+		strs = append(strs, c)
+		return c
+	}
+	defer func() {
+		for _, s := range strs {
+			C.free(unsafe.Pointer(s))
+		}
+	}()
+	for i, l := range links {
+		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
+	}
+	C.onair_live_show(flag(visible), str(display), str(status), str(strings.Join(calls, "\n")), list, C.int(n))
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,

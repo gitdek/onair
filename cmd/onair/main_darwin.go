@@ -15,6 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gitdek/onair/internal/archive"
+	"github.com/gitdek/onair/internal/live"
+	"github.com/gitdek/onair/internal/localmodel"
 	"github.com/gitdek/onair/internal/mac"
 	"github.com/gitdek/onair/internal/mp4"
 	"github.com/gitdek/onair/internal/recorder"
@@ -48,9 +51,20 @@ func main() {
 	// are On Air's own. Recordings are handed to the folder picked from the
 	// menu, and to a folder of On Air's own until one is.
 	support := filepath.Join(home, "Library", "Application Support", "On Air")
-	app := recorder.New(edge{}, recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
+	// The live side runs apart from the recorder, on goroutines of its own,
+	// and hears what the recorder does through the edge it is given. It
+	// asks On the Record only at its read-only door on this Mac.
+	var door live.Archive
+	if client, err := archive.New(archive.Door); err == nil {
+		door = client
+	}
+	// The model asked about the call runs on this Mac, from the Python
+	// environment tools/setup-models makes in On Air's own folder.
+	judges := map[string]live.Judge{recorder.Local: localmodel.New(filepath.Join(support, "models", "venv", "bin", "python"))}
+	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges)
+	app := recorder.New(live.Tap(edge{}, follow), recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
-	mac.Handle(bridge{app})
+	mac.Handle(bridge{app, follow})
 	// On Air's own copy of a recording goes three days after the hand-over,
 	// whether or not On Air was quit in between.
 	go func() {
@@ -66,7 +80,8 @@ type edge struct{}
 
 func (edge) Start(c recorder.Config) {
 	mac.Start(mac.Config{Rows: c.Rows, FPS: c.FPS, PieceSeconds: c.PieceSeconds, VideoBitrate: c.VideoBitrate, Microphone: c.Microphone,
-		QuietSeconds: c.QuietSeconds, Window: c.Target.Window, Display: c.Target.Display, Area: mac.Area(c.Target.Area)})
+		QuietSeconds: c.QuietSeconds, Window: c.Target.Window, Display: c.Target.Display, Area: mac.Area(c.Target.Area),
+		LeaveOutOwnWindows: c.LeaveOutOwnWindows})
 }
 func (edge) AskMicrophone()                         { mac.AskMicrophone() }
 func (edge) Stop()                                  { mac.Stop() }
@@ -82,11 +97,29 @@ func (edge) Choices(c recorder.Choices) {
 	for _, d := range c.Displays {
 		displays = append(displays, mac.Choice{ID: d.ID, Title: d.Title, Picked: d.Picked})
 	}
-	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder)
+	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder, c.Live, c.Judge)
 }
 
-// bridge is the recorder, as the Mac reports things to it.
-type bridge struct{ app *recorder.App }
+// screen is the Mac, as the live side asks things of it.
+type screen struct{}
+
+func (screen) Ask()                                { mac.LiveAsk() }
+func (screen) Listen(on bool, chunk time.Duration) { mac.Listen(on, chunk.Seconds()) }
+
+func (screen) Show(p live.Panel) {
+	var links []mac.Link
+	for _, l := range p.Links {
+		links = append(links, mac.Link{Kind: l.Kind.String(), Title: l.Title, Date: l.Date, Why: l.Why, URL: l.URL})
+	}
+	mac.ShowPanel(p.Visible, p.Display, p.Status, p.Calls, links)
+}
+
+// bridge is the recorder and the live side, as the Mac reports things to
+// them.
+type bridge struct {
+	app    *recorder.App
+	follow *live.Controller
+}
 
 func (b bridge) Segment(opening bool, data []byte) { b.app.Segment(opening, data) }
 
@@ -139,7 +172,43 @@ func (b bridge) Menu(action int) {
 		b.app.Menu(recorder.SelectWindow)
 	case mac.MenuChoose:
 		b.app.Menu(recorder.ChooseFolder)
+	case mac.MenuLive:
+		b.app.Menu(recorder.ToggleLive)
+	case mac.MenuLocal:
+		b.app.Menu(recorder.AskLocal)
 	}
+}
+
+func (b bridge) Heard(speaker int, text string, from, to float64) {
+	who := live.Others
+	if speaker == mac.SpeakerPerson {
+		who = live.Person
+	}
+	b.follow.Heard(live.Heard{Speaker: who, Text: text, From: seconds(from), To: seconds(to)})
+}
+
+func (b bridge) Live(code int, message string) {
+	switch code {
+	case mac.LiveAllowed:
+		b.follow.Report(live.SpeechAllowed, message)
+	case mac.LiveRefused:
+		b.follow.Report(live.SpeechRefused, message)
+	case mac.LiveUnsupported:
+		b.follow.Report(live.SpeechUnsupported, message)
+	case mac.LiveFailed:
+		b.follow.Report(live.SpeechFailed, message)
+	case mac.LiveDropped:
+		b.follow.Report(live.SoundDropped, message)
+	}
+}
+
+// seconds is a time given in seconds since 1970.
+func seconds(s float64) time.Time {
+	if s <= 0 || math.IsNaN(s) || math.IsInf(s, 0) {
+		return time.Time{}
+	}
+	whole, part := math.Modf(s)
+	return time.Unix(int64(whole), int64(part*1e9))
 }
 
 func (b bridge) Displays(displays []mac.Display) {
@@ -177,13 +246,15 @@ func (c *collector) Segment(opening bool, data []byte) {
 	c.err = c.r.PutPiece(c.n, data)
 }
 
-func (c *collector) Event(int, string)      {}
-func (c *collector) Menu(int)               {}
-func (c *collector) Displays([]mac.Display) {}
-func (c *collector) Pick(string)            {}
-func (c *collector) Area(string, mac.Area)  {}
-func (c *collector) Window(string)          {}
-func (c *collector) Folder(string)          {}
+func (c *collector) Event(int, string)                   {}
+func (c *collector) Menu(int)                            {}
+func (c *collector) Displays([]mac.Display)              {}
+func (c *collector) Pick(string)                         {}
+func (c *collector) Area(string, mac.Area)               {}
+func (c *collector) Window(string)                       {}
+func (c *collector) Folder(string)                       {}
+func (c *collector) Heard(int, string, float64, float64) {}
+func (c *collector) Live(int, string)                    {}
 
 func (c *collector) kept() (int, error) {
 	c.mu.Lock()
