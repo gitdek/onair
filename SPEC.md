@@ -121,6 +121,16 @@ Invariant's factory built it from [#1](https://github.com/gitdek/onair/issues/1)
 
 The gate verifies it again on every pull request. The app reaches it as the owner chose in [#11](https://github.com/gitdek/onair/issues/11): it requires the core's tagged release, `github.com/gitdek/onair/core/handover v0.1.0`, pinned by hash in `go.sum`. The tag `core/handover/v0.1.0` is on `dec76f5`, where the gate had verified the core unchanged since [#3](https://github.com/gitdek/onair/pull/3) merged it, so the app builds against the code that was verified. A change to the core needs a new tag, and the app moves to it in a change of its own. [`internal/delivery`](internal/delivery) is its caller, so rules 5, 6, 7 and 11 are held by the app through it: proved in the core for its decisions, and tested on real folders for the steps.
 
+## The session core
+
+[`core/session`](core/session) decides a recording's life: at most one recording at a time, a second Start refused and said; every recording that starts ends exactly once, handed over or kept on disk with its error shown, and how it ended is shown even if On Air dies first; a recording cut short by a crash carries on, up to a set number of restarts, counting a restart that may not have happened. It was built by the factory from [#8](https://github.com/gitdek/onair/issues/8) and finished by hand in [#21](https://github.com/gitdek/onair/pull/21), where Gobra's proofs needed a loop in place of a slice copy and a lighter helper for finding a running recording; no contract changed.
+
+- 49 statements, ratified on the issue and pinned by hash in [`ratified.lock`](core/session/.invariant/ratified.lock).
+- A TLA+ model that TLC explores exhaustively: 39,742 states, every witness reached, every planted bug caught, both liveness properties holding under their fairness.
+- Go code proved with Gobra against contracts that restate the model, 29 of 29 functions with overflow checks, and checked against the model step by step. The check one size larger isn't claimed: TLC doesn't finish it within its three minutes.
+
+Nothing in the app calls it yet. Today's recorder in `internal/recorder` still decides these things in plain Go, and wiring the core in is part of what remains of milestone one.
+
 ## The repository
 
 - Its checks, in `.invariant/repository.json`: formatting, vet, build and tests, run in a pinned Go image. It declares `go.sum` as the app's lockfile, which the gate needs before a pull request may require a Go module, and reads from the base branch, never from the pull request.
