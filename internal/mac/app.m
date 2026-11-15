@@ -9,7 +9,7 @@
 // what Go last told it to show.
 @interface OAApp : NSObject <NSApplicationDelegate, NSMenuDelegate>
 - (void)show:(BOOL)recording last:(NSString *)last note:(NSString *)note;
-- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window;
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder live:(BOOL)live judge:(NSString *)judge;
 @end
 
 @implementation OAApp {
@@ -20,7 +20,9 @@
     NSString *_last, *_note;
     BOOL _open;
     NSArray<NSDictionary *> *_displays;
-    NSString *_area, *_window;
+    NSString *_area, *_window, *_folder;
+    BOOL _live;
+    NSString *_judge;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
@@ -54,11 +56,14 @@
     [self draw];
 }
 
-- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window {
+- (void)choices:(BOOL)open displays:(NSArray<NSDictionary *> *)displays area:(NSString *)area window:(NSString *)window folder:(NSString *)folder live:(BOOL)live judge:(NSString *)judge {
+    _live = live;
+    _judge = judge;
     _open = open;
     _displays = displays;
     _area = area.length ? area : nil;
     _window = window.length ? window : nil;
+    _folder = folder.length ? folder : nil;
 }
 
 - (void)draw {
@@ -116,6 +121,21 @@
     }
     [self add:menu title:@"Select Window…" action:ONAIR_MENU_WINDOW enabled:_open];
     if (_window) [self add:menu title:_window action:0 enabled:NO].state = NSControlStateValueOn;
+    // Where recordings go can be picked at any time: a recording goes to
+    // the folder picked when it is handed over.
+    [menu addItem:[NSMenuItem separatorItem]];
+    [self add:menu title:@"Hand Recordings To" action:0 enabled:NO];
+    if (_folder) [self add:menu title:_folder action:0 enabled:NO].state = NSControlStateValueOn;
+    [self add:menu title:@"Choose Folder…" action:ONAIR_MENU_CHOOSE enabled:YES];
+    // The live panel, which shows while recording what the call connects
+    // to in On the Record, can be turned on or off at any time.
+    [menu addItem:[NSMenuItem separatorItem]];
+    [self add:menu title:@"Show Live Context" action:ONAIR_MENU_LIVE enabled:YES].state = _live ? NSControlStateValueOn : NSControlStateValueOff;
+    // Asking a model about the call works while Live Context is on.
+    NSMenuItem *local = [self add:menu title:@"Ask a local model about the call" action:ONAIR_MENU_LOCAL enabled:_live];
+    local.state = [_judge isEqualToString:@"local"] ? NSControlStateValueOn : NSControlStateValueOff;
+    local.indentationLevel = 1;
+    local.toolTip = @"Liquid's d1-2B, on this Mac: the call's words don't leave it. Set it up once with tools/setup-models.";
     [menu addItem:[NSMenuItem separatorItem]];
     if (_last) [self add:menu title:[NSString stringWithFormat:@"Show “%@”", _last.lastPathComponent] action:ONAIR_MENU_LAST enabled:YES];
     [self add:menu title:@"Open Recordings Folder" action:ONAIR_MENU_FOLDER enabled:YES];
@@ -182,7 +202,7 @@ void onair_show(int recording, const char *last, const char *note) {
     });
 }
 
-void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window) {
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live, const char *judge) {
     NSMutableArray<NSDictionary *> *list = [NSMutableArray array];
     for (int i = 0; i < count; i++) {
         [list addObject:@{
@@ -192,11 +212,12 @@ void onair_choices(int open, const onair_choice *displays, int count, const char
         }];
     }
     NSString *a = [NSString stringWithUTF8String:area ?: ""], *w = [NSString stringWithUTF8String:window ?: ""];
+    NSString *f = [NSString stringWithUTF8String:folder ?: ""], *j = [NSString stringWithUTF8String:judge ?: ""] ?: @"";
     long asked = atomic_fetch_add(&choicesAsked, 1) + 1;
     onMain(^{
         if (asked <= choicesDone) return;
         choicesDone = asked;
-        [app choices:open != 0 displays:list area:a window:w];
+        [app choices:open != 0 displays:list area:a window:w folder:f live:live != 0 judge:j];
     });
 }
 

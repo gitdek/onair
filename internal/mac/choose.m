@@ -48,6 +48,7 @@ void OAReportDisplays(void) {
 
 // OAAreaView dims its display and lets a person drag out an area of it.
 // Escape cancels; Return, or letting go of the mouse, picks what was drawn.
+// A line on the dimmed display says so.
 @interface OAAreaView : NSView
 @property(copy) void (^done)(NSRect area); // an empty area when cancelled
 @end
@@ -112,7 +113,10 @@ void OAReportDisplays(void) {
 - (void)drawRect:(NSRect)dirty {
     [[NSColor colorWithWhite:0 alpha:0.45] setFill];
     NSRectFill(self.bounds);
-    if (NSIsEmptyRect(_area)) return;
+    if (NSIsEmptyRect(_area)) {
+        [self drawHint];
+        return;
+    }
     [NSColor.clearColor setFill];
     NSRectFillUsingOperation(_area, NSCompositingOperationCopy);
     [[NSColor colorWithWhite:1 alpha:0.9] setStroke];
@@ -128,6 +132,24 @@ void OAReportDisplays(void) {
     NSPoint at = NSMakePoint(NSMinX(_area) + 6, NSMinY(_area) - label.height - 4);
     if (at.y < 4) at.y = NSMinY(_area) + 6;
     [size drawAtPoint:at withAttributes:attributes];
+    [self drawHint];
+}
+
+// DrawHint says how the overlay is used, in a dark capsule centred near the
+// top of the display, or near the bottom when the area drawn is in its way.
+- (void)drawHint {
+    NSString *hint = @"Drag to select · Return or let go to confirm · Esc to cancel";
+    NSDictionary *attributes = @{
+        NSFontAttributeName : [NSFont systemFontOfSize:14 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName : NSColor.whiteColor,
+    };
+    NSSize text = [hint sizeWithAttributes:attributes];
+    NSRect bounds = self.bounds;
+    NSRect box = NSMakeRect(round(NSMidX(bounds) - text.width / 2 - 14), NSMaxY(bounds) - 80 - text.height - 16, ceil(text.width) + 28, ceil(text.height) + 16);
+    if (!NSIsEmptyRect(_area) && NSIntersectsRect(box, _area)) box.origin.y = NSMinY(bounds) + 80;
+    [[NSColor colorWithWhite:0 alpha:0.65] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:box xRadius:box.size.height / 2 yRadius:box.size.height / 2] fill];
+    [hint drawAtPoint:NSMakePoint(NSMinX(box) + 14, NSMinY(box) + 8) withAttributes:attributes];
 }
 
 @end
@@ -254,6 +276,34 @@ void onair_select_window(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!picker) picker = [[OAPicker alloc] init];
         [picker present];
+    });
+}
+
+static NSOpenPanel *folderPanel;
+
+void onair_choose_folder(const char *current) {
+    NSString *at = [NSString stringWithUTF8String:current ?: ""];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (folderPanel) {
+            [folderPanel makeKeyAndOrderFront:nil];
+            return;
+        }
+        NSOpenPanel *panel = [NSOpenPanel openPanel];
+        panel.canChooseDirectories = YES;
+        panel.canChooseFiles = NO;
+        panel.allowsMultipleSelection = NO;
+        panel.canCreateDirectories = YES;
+        panel.prompt = @"Choose";
+        panel.message = @"Choose the folder On Air hands each finished recording to: the one On the Record watches.";
+        if (at.length) panel.directoryURL = [NSURL fileURLWithPath:at isDirectory:YES];
+        folderPanel = panel;
+        // A menu-bar app comes forward, so its panel takes the keys.
+        [NSApp activate];
+        [panel beginWithCompletionHandler:^(NSModalResponse response) {
+            folderPanel = nil;
+            NSURL *url = panel.URL;
+            if (response == NSModalResponseOK && url.fileURL) onairFolder((char *)url.path.fileSystemRepresentation);
+        }];
     });
 }
 

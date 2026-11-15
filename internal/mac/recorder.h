@@ -15,6 +15,7 @@ typedef struct {
     int window;          // 1 to record the picked window
     const char *display; // otherwise the display to record, by its identifier, or "" for the main one
     double areaX, areaY, areaWidth, areaHeight; // a part of it, in its points from its top left; no width for all of it
+    int leaveOutOwn;     // 1 to leave On Air's own windows, such as the live panel, out of a display's picture
 } onair_config;
 
 // What onairEvent reports.
@@ -42,7 +43,34 @@ enum {
     ONAIR_MENU_AREA = 6,   // Select Area…
     ONAIR_MENU_WHOLE = 7,  // Whole Display
     ONAIR_MENU_WINDOW = 8, // Select Window…
+    ONAIR_MENU_CHOOSE = 9, // Choose Folder…
+    ONAIR_MENU_LIVE = 10,  // Show Live Context
+    ONAIR_MENU_LOCAL = 11, // Ask a local model about the call
 };
+
+// What onairLive reports about listening for the live side.
+enum {
+    ONAIR_LIVE_ALLOWED = 1,     // On Air may recognize speech
+    ONAIR_LIVE_REFUSED = 2,     // it may not; the message says how
+    ONAIR_LIVE_UNSUPPORTED = 3, // the Mac can't recognize the language by itself; the message names it
+    ONAIR_LIVE_FAILED = 4,      // recognition reported an error; the message says what
+    ONAIR_LIVE_DROPPED = 5,     // sound was dropped because recognition fell behind; the message is how many buffers so far
+};
+
+// Whose words onairHeard reports.
+enum {
+    ONAIR_SPEAKER_PERSON = 1, // the microphone: the person recording
+    ONAIR_SPEAKER_OTHERS = 2, // the call's sound: everyone else
+};
+
+// A link the live panel shows.
+typedef struct {
+    const char *kind;  // what it leads to: a meeting, a notebook entry or an open item
+    const char *title;
+    const char *date;
+    const char *why;   // a line on why it connects
+    const char *link;  // what a click opens
+} onair_link;
 
 // A connected display, as onairDisplays reports it.
 typedef struct {
@@ -124,18 +152,37 @@ void onair_frame_size(double width, double height, double scale, int rows, int *
 void onair_run(void);
 // Show sets what the menu-bar item says. Any thread may call it.
 void onair_show(int recording, const char *last, const char *note);
-// Choices sets the part of the menu that picks what to record: whether a
-// choice can be made, the displays, and what names the picked area and the
-// picked window, if any. Any thread may call it.
-void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window);
+// Choices sets the part of the menu that picks what to record, and where
+// recordings go: whether what to record can be picked, the displays, what
+// names the picked area and the picked window, if any, what names the
+// folder recordings go to, whether Live Context is on, and which model is
+// asked about the call, if any. Any thread may call it.
+void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live, const char *judge);
 // SelectArea dims a display and lets a person drag out an area of it.
 // onairArea follows, unless they cancel.
 void onair_select_area(const char *display);
 // SelectWindow shows the system's picker for one window, which the edge
 // keeps. onairWindow follows, unless they cancel.
 void onair_select_window(void);
+// ChooseFolder shows the system's folder picker, folders only, opened on
+// current. onairFolder follows with the folder picked, unless they cancel.
+void onair_choose_folder(const char *current);
 // Reveal shows a file or a folder in the Finder.
 void onair_reveal(const char *path);
+
+// LiveAsk asks whether On Air may recognize speech, which macOS asks the
+// person the first time, and returns at once. ONAIR_LIVE_ALLOWED or
+// ONAIR_LIVE_REFUSED follows.
+void onair_live_ask(void);
+// LiveListen starts or stops recognizing speech in capture's two sounds,
+// on the Mac only, and returns at once. While on, onairHeard reports the
+// finished words of each sound about every chunk seconds, and onairLive
+// reports what goes wrong.
+void onair_live_listen(int on, double chunk);
+// LiveShow sets what the live panel shows, or hides it: a status line,
+// what a model said about the call, a line each, and links. Any thread may
+// call it.
+void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_link *links, int count);
 // Quit ends the app.
 void onair_quit(void);
 

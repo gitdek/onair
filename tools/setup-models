@@ -1,0 +1,35 @@
+#!/bin/bash
+# Sets up, once, the local model On Air asks about a call: a Python
+# environment in On Air's own folder, pinned to the versions it was tried
+# with, from which On Air runs its helper. It needs uv. It installs packages
+# from PyPI, and downloads no model: Liquid's d1-2B (MLX, 8-bit) must already
+# be in the Hugging Face cache, at the revision On Air pins, and the helper
+# only ever reads it from there. On Air never runs this by itself.
+set -euo pipefail
+
+models="$HOME/Library/Application Support/On Air/models"
+venv="$models/venv"
+model=LiquidAI/d1-2B-MLX-8bit
+revision=3247d0483b11e5da31fa10e7979c23252fbe3580
+
+if ! command -v uv >/dev/null; then
+	echo "setup-models needs uv: https://docs.astral.sh/uv/" >&2
+	exit 1
+fi
+mkdir -p "$models"
+uv venv --quiet --allow-existing --python 3.13.14 "$venv"
+uv pip install --quiet --python "$venv/bin/python" \
+	mlx==0.32.4 mlx-lm==0.32.2 mlx-vlm==0.7.12 transformers==5.23.0 huggingface_hub==2.4.0
+
+# The model, from the cache only, where the helper finds it.
+if ! HF_HUB_OFFLINE=1 "$venv/bin/python" -I -c "
+import os, sys
+from huggingface_hub import constants
+path = os.path.join(constants.HF_HUB_CACHE, 'models--' + sys.argv[1].replace('/', '--'), 'snapshots', sys.argv[2])
+sys.exit(0 if all(os.path.isfile(os.path.join(path, f)) for f in ('config.json', 'model.safetensors')) else 1)
+" "$model" "$revision"; then
+	echo "The environment is ready, but $model at $revision isn't in the Hugging Face cache." >&2
+	echo "Download it once, for example with: $venv/bin/hf download $model --revision $revision" >&2
+	exit 1
+fi
+echo "Ready: On Air asks the local model through $venv/bin/python."

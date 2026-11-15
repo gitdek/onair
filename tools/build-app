@@ -39,6 +39,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>On Air records your microphone with the meeting.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>With Live Context on, On Air recognizes the call's speech on this Mac to show what it connects to in On the Record. The words don't leave the Mac.</string>
 </dict>
 </plist>
 PLIST
