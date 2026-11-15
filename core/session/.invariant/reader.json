@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "fingerprint": "sha256:d402ff51dda23737fbf0bbaa4763805d34e743c49353fedfaf384551d0981a91",
+  "limitation": {
+    "code": "too_large",
+    "actual": 39742,
+    "limit": 500,
+    "source": {
+      "module": "RecordingSession",
+      "config": {
+        "Specification": "Spec",
+        "Constants": {
+          "Errors": "{fault}",
+          "MaxRestarts": "2",
+          "Recordings": "{r1, r2}"
+        },
+        "Invariants": [
+          "OneRunning",
+          "EveryAcceptedIsAccountedFor",
+          "StopIsLatched",
+          "FinishAfterCapture",
+          "TypeOK",
+          "StartDecision",
+          "CaptureBelongsToRunning",
+          "ExactlyOneEnd",
+          "KeptHasError",
+          "NothingRecordedIsKept",
+          "UnshownEndIsSaved",
+          "EndNoticeIsExact",
+          "StartingStopIsImmediate",
+          "NoStartAfterStop",
+          "AutomaticStopExplained",
+          "RestartBudgetIsSaved",
+          "RestartShowsGap",
+          "OneFinishInOrder",
+          "GapKeepsRecording",
+          "CaptureFailureCloses",
+          "AcknowledgedEndsAreRemoved",
+          "CrashKeepsSavedRecord"
+        ],
+        "Properties": null
+      },
+      "tool": {
+        "Image": "eclipse-temurin@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29c525d58bf5e02e91b0f",
+        "JarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+      },
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    }
+  },
+  "comparison_ref": {
+    "version": 1,
+    "file": "comparison.json",
+    "fingerprint": "sha256:0c9c7c40ddb8586d36c91840c333deab34b657e66df8372f1118de1794f8dfd7"
+  }
+}
