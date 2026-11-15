@@ -1,0 +1,450 @@
+{
+  "ratified": {
+    "by": "gitdek",
+    "at": "2026-11-15T20:50:06Z",
+    "issue": 9,
+    "comment": "https://github.com/gitdek/onair/issues/9#issuecomment-6901150746",
+    "proposal": "sha256:fc92224fede263146de36e5a96f963e64234f68b9790b9648455decdd1a1ec72"
+  },
+  "bounds": {
+    "Durations": "{2, 3}",
+    "InterruptionLimit": "2",
+    "MaxPieces": "2",
+    "RecordingId": "\"recording-1\"",
+    "SpoolPath": "\"spool/recording-1\""
+  },
+  "statements": [
+    {
+      "name": "Spec",
+      "kind": "spec",
+      "says": "The bookkeeping starts in Init and changes only through the modeled requests, caller reports, crashes and launches.",
+      "sha256": "sha256:907831447bdadb94c45fd5ba866cf5f8b92a727bff48c1d2f7c2c79bbf7fba0f"
+    },
+    {
+      "name": "ClosedPiecesPreserved",
+      "kind": "invariant",
+      "says": "Every piece ever closed keeps its named bytes until the joined recording has been handed over and the caller reports that the three-day retention period has passed.",
+      "sha256": "sha256:8b2f8c6bb6ef8464470994737c3793095f53d5775ac0d4ab4d2de732337bad72"
+    },
+    {
+      "name": "WholePiecesAreDurable",
+      "kind": "invariant",
+      "says": "Every piece with its final name has all its bytes flushed to disk.",
+      "sha256": "sha256:3222b806166a0db29bd3101b019d81729f055d29780f0d045f3bd49a19d1712e"
+    },
+    {
+      "name": "NamingRequiresFlushReport",
+      "kind": "invariant",
+      "says": "This part requests a piece’s final name only after the caller has reported that all its bytes are flushed to disk.",
+      "sha256": "sha256:9e705f35ae8f6d32a1d3133c821b9f42f56f75f93bf9b5c12d11b36774533b31"
+    },
+    {
+      "name": "TypeOK",
+      "kind": "invariant",
+      "says": "Every bookkeeping field, caller effect and verification history has its declared type.",
+      "sha256": "sha256:2088f27f30d7d69820ac25428248bdaf366fce4dcc571c4f2a7896ae14223e06"
+    },
+    {
+      "name": "OnlyNamedPiecesAreWhole",
+      "kind": "invariant",
+      "says": "Before removal is allowed, every piece recorded as whole has its final name on disk.",
+      "sha256": "sha256:9656b57452158edacebeb0ff827c3cc98a2d3af4f10553180ca943a50a47d583"
+    },
+    {
+      "name": "SettledInventoryMatchesDisk",
+      "kind": "invariant",
+      "says": "Whenever the bookkeeping is running outside an unresolved naming or removal operation, its inventory is exactly the pieces named on disk.",
+      "sha256": "sha256:84da34c3fafd56c40bed5ddae1e9ffce7a2204bed9295cac98ac0d274e307806"
+    },
+    {
+      "name": "ClosedNumbersNeverReused",
+      "kind": "invariant",
+      "says": "Closed pieces form the numbered sequence starting at one, and a new write always uses the number after the last closed piece.",
+      "sha256": "sha256:fc780ed6612c85d9b447e64aa378b100837fac83ae931c41cb6a631347a3ba51"
+    },
+    {
+      "name": "JoinWaitsForFinalCapture",
+      "kind": "invariant",
+      "says": "Finishing the recording begins only after capture is final and no piece remains open.",
+      "sha256": "sha256:8cdbab01e2b3c2d58be2b4f937047988919e45c60e82536b3bc3ff4c5c06ad6d"
+    },
+    {
+      "name": "OnlyOneOpenPiece",
+      "kind": "invariant",
+      "says": "At most one piece has hidden bytes, and any open piece is the one immediately after the recorded closed pieces.",
+      "sha256": "sha256:d87da1a9d395c9ffdc448fbdadb75ecc3e813c9dfaa1dbbfe899aa65c376b257"
+    },
+    {
+      "name": "NoMoreFromFailedCapture",
+      "kind": "invariant",
+      "says": "A write failure prevents any more pieces from that capture and remains recorded when the capture is finalized.",
+      "sha256": "sha256:8725daf979341911c64c689c9209d920a5a9d7cbe95ba9c00b97e879fb0143df"
+    },
+    {
+      "name": "JoinUsesEveryClosedPieceInOrder",
+      "kind": "invariant",
+      "says": "Each join request contains every closed piece exactly once in increasing number order.",
+      "sha256": "sha256:22817ed71d5f00256851328636efd5e500f4fa175d389251f37e3673882d83f5"
+    },
+    {
+      "name": "JoinRequestHasOnlyWholePieces",
+      "kind": "invariant",
+      "says": "Joining uses a nonempty set of closed pieces still present on disk and never starts another join over an already named joined file.",
+      "sha256": "sha256:65591a3477472493b8eab1a4b56c241aa2fa2ddd872d5863f5a946228fcb071e"
+    },
+    {
+      "name": "JoinPublicationNeedsSavedManifest",
+      "kind": "invariant",
+      "says": "A named joined file always has a saved manifest matching its omitted pieces and their gap durations.",
+      "sha256": "sha256:5275ca44ec6d367872783567544c7201092785f6f05ad3e6500330af9e7834c3"
+    },
+    {
+      "name": "EveryOmissionHasItsDuration",
+      "kind": "invariant",
+      "says": "A successful join preparation leaves at least one piece readable and records the duration of every omitted piece.",
+      "sha256": "sha256:231f84ec936a5839a686c1840965ac696db49033cf17f07b6229ae3503ec976e"
+    },
+    {
+      "name": "OneJoinedFileOnly",
+      "kind": "invariant",
+      "says": "Every hand-over uses the recording’s stable identity and its single joined file, and no piece is handed over.",
+      "sha256": "sha256:940a7975bde2b6c81b4692a375395e81618c7adf108184a5d461fd82c43f32a5"
+    },
+    {
+      "name": "HandoverRequiresSuccess",
+      "kind": "invariant",
+      "says": "A recording counts as handed over only after the hand-over has succeeded.",
+      "sha256": "sha256:f77e5d1baa0ff8631db7a0570c1e2041e4bec0fb4abe93eb72fee8159d507c00"
+    },
+    {
+      "name": "RemovalWaitsThreeDaysAfterHandover",
+      "kind": "invariant",
+      "says": "Piece removal is requested only after successful hand-over and the caller’s report that three days have passed.",
+      "sha256": "sha256:cc42cf5f871d9bcbe99ba5c3312a82e45954280b1c5d66c18dd998e012b6d377"
+    },
+    {
+      "name": "FailedJoinKeepsRecording",
+      "kind": "invariant",
+      "says": "A failed join hands over nothing, preserves every closed piece, and records its failure reason.",
+      "sha256": "sha256:77353a8917f09084dfc30c82009b464d96edb52478a4071b66d232ac9d811a00"
+    },
+    {
+      "name": "FailedHandoverKeepsRecording",
+      "kind": "invariant",
+      "says": "A reported hand-over failure keeps every closed piece and records the error without counting the recording as handed over.",
+      "sha256": "sha256:8b2baab925d8c77a7b6701827faa4b67da653b2d8d4367e23b1e2829a755122b"
+    },
+    {
+      "name": "ErrorsIdentifySpool",
+      "kind": "invariant",
+      "says": "Every reported error identifies the recording’s spool location for the menu.",
+      "sha256": "sha256:85a2569686f67356e47e8c80a092932c80942baf4f4ae0abc62e0543748eeaba"
+    },
+    {
+      "name": "InterruptionCountSurvivesRetries",
+      "kind": "invariant",
+      "says": "While running, the saved interruption count includes every interrupted join up to the limit and is never reset by a retry.",
+      "sha256": "sha256:f583a3ae9161563a84ddfc4d25df39c0c49d4fe496da675beffa3ec3cc5fac32"
+    },
+    {
+      "name": "InterruptedJoinStopsAtLimit",
+      "kind": "invariant",
+      "says": "Every launch that recovers an interrupted join at the cumulative interruption limit reports failure, and every such failure awaiting cleanup has reached the limit.",
+      "sha256": "sha256:90c90b4c9c221ab72477fca0f6b7f9b8cbca1cb5d8c3494c1353b433b710940e"
+    },
+    {
+      "name": "EmptyMeansNothingRecorded",
+      "kind": "invariant",
+      "says": "A recording with no closed pieces finishes with nothing recorded and neither joins nor hands over a file.",
+      "sha256": "sha256:07e7e1e1f49f4615c5e4ce601a7f6d8074eb8bab51727f302acb11c4ecceab47"
+    },
+    {
+      "name": "NamedPieceRecoveryUsesDisk",
+      "kind": "invariant",
+      "says": "Recovery accepts a piece named before the crash as closed even if its naming result was not saved.",
+      "sha256": "sha256:cdf42c8194ab34cd664c0758adf0fc94c003da04769cb26632b59e87995c2ae0"
+    },
+    {
+      "name": "NamedJoinRecoveryUsesExistingFile",
+      "kind": "invariant",
+      "says": "Recovery of an already named joined file proceeds to hand-over using that file.",
+      "sha256": "sha256:2a0d76a692dab58fc7512fef36a07efd6cc99fecbbfd38bdae0f9c6cac2a7842"
+    },
+    {
+      "name": "InterruptedJoinRecovery",
+      "kind": "invariant",
+      "says": "Recovery discards an interrupted join’s partial output and schedules a retry below the interruption limit or reports failure at the limit.",
+      "sha256": "sha256:088c6411bc1986ecff7ad7f1c2a8a93036e397300be56ea8b909b4cb272818ce"
+    },
+    {
+      "name": "FailedJoinRetriesOnLaunch",
+      "kind": "invariant",
+      "says": "Launching after a failed join schedules its partial output cleanup and another join attempt.",
+      "sha256": "sha256:a20a8942bff852c4e532350f64dec2655d0e3ffaef578c698edcc912c0195079"
+    },
+    {
+      "name": "HandoverRetriesOnLaunch",
+      "kind": "invariant",
+      "says": "Launching after an unresolved or failed hand-over schedules another request for the same joined recording.",
+      "sha256": "sha256:73df76161c429424c48174abca985adf083dbda586a205c9669c810a857b1e37"
+    },
+    {
+      "name": "RetryRequestRemainsPending",
+      "kind": "invariant",
+      "says": "A person’s retry request remains pending against the failed join or hand-over until it is scheduled or recovered at launch.",
+      "sha256": "sha256:aa7d967a405fddbb595bbe629500200476899093d22dbbf226921563f84310de"
+    },
+    {
+      "name": "SuccessfulHandover",
+      "kind": "witness",
+      "says": "A recording can be joined and handed over without omissions.",
+      "sha256": "sha256:723f51aefae664150944fef5f1d3d7480b1bef8cdbf66b90c364b4c9fa9abb31"
+    },
+    {
+      "name": "HandoverWithGap",
+      "kind": "witness",
+      "says": "A recording can be handed over with an unreadable piece omitted and its duration reported as a gap.",
+      "sha256": "sha256:fab5647af73b5a0af1fbfde1ce5498babe63f011a2223e75658975b0b834bcda"
+    },
+    {
+      "name": "WriteFailureKept",
+      "kind": "witness",
+      "says": "A failed write can discard the open remnant while preserving earlier closed pieces.",
+      "sha256": "sha256:d72a127fbf8a109baa562c407fb27e55533deee4678d0e865cad6c59223a06bf"
+    },
+    {
+      "name": "JoinFailureKept",
+      "kind": "witness",
+      "says": "A join can fail while every closed piece stays in the spool.",
+      "sha256": "sha256:5eaae5d52f9693edebf5a601fc059da1078832344d626c32db02840ee99ee605"
+    },
+    {
+      "name": "NoneReadableKept",
+      "kind": "witness",
+      "says": "A join that can read no piece can fail while keeping all the pieces.",
+      "sha256": "sha256:7579eaab73a39598a756a2848a9259e9370cc58229b9867f49bdf198fd95a18b"
+    },
+    {
+      "name": "HandoverFailureKept",
+      "kind": "witness",
+      "says": "Hand-over can fail after a successful join while all the pieces stay in the spool.",
+      "sha256": "sha256:a87879dfb8368c63389b9dab6280fbd77d1bf44ef15265b49d7302f189c5075e"
+    },
+    {
+      "name": "NothingRecorded",
+      "kind": "witness",
+      "says": "A capture with no closed piece can finish with nothing recorded.",
+      "sha256": "sha256:cceb069dab2fd07079fe8bb112660ee1bc107a3709ad889ffd1d4d4d72b97fc9"
+    },
+    {
+      "name": "RetentionCompleted",
+      "kind": "witness",
+      "says": "All pieces can be removed after successful hand-over and the retention period.",
+      "sha256": "sha256:dc1542ded518ed317289b98e108d2b42e46323eb4f7d3aabfe03b011d6cabddf"
+    },
+    {
+      "name": "InterruptionLimitReached",
+      "kind": "witness",
+      "says": "Repeated interrupted joins can reach the limit and be reported as a failed join.",
+      "sha256": "sha256:78a96a4a2161d1bde36289f7bc6a8bdadb63d78cd0b1486f2add902f62dc3f49"
+    },
+    {
+      "name": "SuccessAfterInterruptionLimit",
+      "kind": "witness",
+      "says": "A later retry can succeed without resetting an interruption count that has already reached the limit.",
+      "sha256": "sha256:d48211e5219f164796d57a924cfe71cd89c8997239c84ab16e0378297148efb2"
+    },
+    {
+      "name": "NamedPieceSurvivesUnrecordedCrash",
+      "kind": "witness",
+      "says": "A crash can leave a whole named piece whose successful naming has not yet been recorded.",
+      "sha256": "sha256:88fafdefd5ebe2ced3b4065689c8c159ad1132d972d6513c06d9da0ebd8f4f67"
+    },
+    {
+      "name": "NamedJoinSurvivesUnrecordedCrash",
+      "kind": "witness",
+      "says": "A crash can leave a named joined file before the join success is recorded.",
+      "sha256": "sha256:353057480e9ce5558d4a81ac38f7eba261ada2beb64e42263f3d103511f1823d"
+    },
+    {
+      "name": "UnresolvedHandoverSurvivesCrash",
+      "kind": "witness",
+      "says": "A crash can occur after the archive receives the joined file but before hand-over success is recorded.",
+      "sha256": "sha256:3b9e864fb91e393fd522e833229c3536998ed0021c88605ba2512a3056c77813"
+    },
+    {
+      "name": "CarriedOnWithNextPiece",
+      "kind": "witness",
+      "says": "After recovering an unrecorded named piece, capture can carry on using the following piece number.",
+      "sha256": "sha256:0878b167712c3653db13122dd83df30404fbf978653b8092aa8540fe3b64c986"
+    },
+    {
+      "name": "PersonRetryReceived",
+      "kind": "witness",
+      "says": "A person can request another attempt after a reported failure.",
+      "sha256": "sha256:a7da3fc71ab88fa1fc730187288dad6b1c9d5778464ae421f1fda304af89cbd3"
+    },
+    {
+      "name": "NamedJoinRecovered",
+      "kind": "witness",
+      "says": "A launch can recover an already named joined file and its saved gap manifest.",
+      "sha256": "sha256:0bccfe8c83bde4b0b308c1be72fb8125a40d0bac2d89fe99db1bda64acdd5817"
+    },
+    {
+      "name": "PersonRetryProgress",
+      "kind": "property",
+      "says": "While the app keeps running, a pending request from the person eventually schedules join cleanup or hand-over.",
+      "sha256": "sha256:91edfeaf6013efaba75931b0a5639728cb7836929864d1c6efa3c53ac683e79e"
+    },
+    {
+      "name": "JoinRequestProgress",
+      "kind": "property",
+      "says": "While the app keeps running, a join ready to start is eventually requested.",
+      "sha256": "sha256:fba1d1a6f30c59fe9777715f6c7bb90fece803adff34651381f4110998af102f"
+    },
+    {
+      "name": "HandoverRequestProgress",
+      "kind": "property",
+      "says": "While the app keeps running, a hand-over ready to start is eventually requested.",
+      "sha256": "sha256:73ab4b9442d5bd2dcec8ef8c130d2b0971f06dd464bee7bddbf24a53d1873cd1"
+    },
+    {
+      "name": "FinalCaptureProgress",
+      "kind": "property",
+      "says": "While the app keeps running, a final capture with no open piece eventually becomes ready to join or reports nothing recorded.",
+      "sha256": "sha256:edd26b63f05f313a73b417505b4ecd3a839d7fe2424f1d5709f3172ad26e2b6e"
+    },
+    {
+      "name": "RetentionRequestProgress",
+      "kind": "property",
+      "says": "While the app keeps running, expiry of the retention period eventually causes a piece removal request.",
+      "sha256": "sha256:2eab292fb30b1fe957e1fbd13f94ae703db830ea3b42d9c6d18f0f56b565fd14"
+    },
+    {
+      "name": "FairRetryScheduling",
+      "kind": "fairness",
+      "says": "If scheduling a requested retry remains possible, the bookkeeping eventually schedules it.",
+      "sha256": "sha256:0e8bbab776c1d0039870d8ff94a8f7e2a8044837e79aa091df13de95323db9fa"
+    },
+    {
+      "name": "FairJoinRequest",
+      "kind": "fairness",
+      "says": "If issuing a join request remains possible, the bookkeeping eventually issues it.",
+      "sha256": "sha256:4bbe551eb03e9709acc9448f07000e9f44c7d546f8e1d96803b8afdcd05a54ac"
+    },
+    {
+      "name": "FairHandoverRequest",
+      "kind": "fairness",
+      "says": "If issuing a hand-over request remains possible, the bookkeeping eventually issues it.",
+      "sha256": "sha256:b8da618f3d4a8aa29e2c6fd40f6b566ff447243dc52951dac34bfa7f79e9364e"
+    },
+    {
+      "name": "FairFinalization",
+      "kind": "fairness",
+      "says": "If finalizing the capture remains possible, the bookkeeping eventually finalizes it.",
+      "sha256": "sha256:d6f6a3724754cad23152759d02392fd90ce66a024cc1cd79f98a467e9f6ac672"
+    },
+    {
+      "name": "FairRemovalRequest",
+      "kind": "fairness",
+      "says": "If issuing a piece removal request remains possible, the bookkeeping eventually issues it.",
+      "sha256": "sha256:b5c0da347142f3b4b0f7ce74c4dfbb126624a187eb4f8d16c8bdcddfd480e3a3"
+    },
+    {
+      "name": "RemoveBeforeHandover",
+      "kind": "bug",
+      "says": "An implementation mistakenly removes a closed piece as soon as joining succeeds, before hand-over.",
+      "expect": "ClosedPiecesPreserved",
+      "sha256": "sha256:7e6b301b6309991f5d240a3cd7711c30e11c1b4e5f9b33b96eceec58d488bb11",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "NameBeforeFlush",
+      "kind": "bug",
+      "says": "An implementation mistakenly names a piece before its bytes have been flushed.",
+      "expect": "WholePiecesAreDurable",
+      "sha256": "sha256:9064caf37627257974f829487d6818ae03c99253de43a5a0fe855fc9388a251d",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "ForgetGapDurations",
+      "kind": "bug",
+      "says": "An implementation mistakenly loses saved gap durations after naming the joined file.",
+      "expect": "JoinPublicationNeedsSavedManifest",
+      "sha256": "sha256:affbf4308be0c92bb96486e1087192d0b2732a8553bec7919455f31756a498bf",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "ResetInterruptionCount",
+      "kind": "bug",
+      "says": "An implementation mistakenly resets the interruption count when retrying a failed join.",
+      "expect": "InterruptionCountSurvivesRetries",
+      "sha256": "sha256:7a132e907ea10ba58e9e676221c7a5ca2cb43333b0fac5029c6d807db63df2a8",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "RejoinNamedOutput",
+      "kind": "bug",
+      "says": "An implementation mistakenly starts joining again at launch after a crash between the joined file receiving its name and the join success being saved.",
+      "expect": "JoinRequestHasOnlyWholePieces",
+      "sha256": "sha256:e65b93c6ad17e633f7852d19b21230a37c72d2d0a594046bafbd924e7bb1736a",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "RecoverNextNumberFromSavedCount",
+      "kind": "bug",
+      "says": "An implementation mistakenly recovers the next piece number from the stale saved count, so carrying on reuses a piece number already named on disk.",
+      "expect": "ClosedNumbersNeverReused",
+      "sha256": "sha256:bfce3534c01ccc233ae7452d53fba457315a8be7851405de427f96a2866fab84",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "JoinWithOpenPiece",
+      "kind": "bug",
+      "says": "An implementation mistakenly requests the join while the final capture still has an open piece.",
+      "expect": "JoinWaitsForFinalCapture",
+      "sha256": "sha256:08c7a74f47bb7d66d3b7416fc31e51ce34e5510236ea8cfdf4d00dca6443b049",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "HandoverPieceAfterJoinFailure",
+      "kind": "bug",
+      "says": "An implementation mistakenly hands over a piece after the join fails.",
+      "expect": "OneJoinedFileOnly",
+      "sha256": "sha256:78f37bc3551db73afb0999c155206aa2cc53e594a681c47b22c8841a6bf3238c",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "RemoveAfterJoinFailure",
+      "kind": "bug",
+      "says": "An implementation mistakenly removes a closed piece after the join fails.",
+      "expect": "ClosedPiecesPreserved",
+      "sha256": "sha256:3c6ddfb2ab837e569908c4ead2a70a2fbf3716a3810b8ee8b42e187402ac15b6",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "IgnorePersonJoinRetry",
+      "kind": "bug",
+      "says": "The current behavior leaves a failed join waiting for another launch instead of scheduling the person’s requested retry.",
+      "expect": "PersonRetryProgress",
+      "sha256": "sha256:d503d9f29aade5ea60d5247b43a38299ef5895053eadffe088f2d42c192b11cc",
+      "code_behavior": "current"
+    },
+    {
+      "name": "RequestNameWithoutFlushReport",
+      "kind": "bug",
+      "says": "An implementation mistakenly requests a piece’s name before receiving the flush report, even when its bytes happen already to be on disk.",
+      "expect": "NamingRequiresFlushReport",
+      "sha256": "sha256:99b1b04575325f16a4231dc2ff47f4a1c7b7a46d9f48e44251db2fe589ee2246",
+      "code_behavior": "hypothetical"
+    },
+    {
+      "name": "RetryInterruptedJoinAtLimit",
+      "kind": "bug",
+      "says": "An implementation mistakenly retries an interrupted join at the cumulative interruption limit without reporting failure on that launch.",
+      "expect": "InterruptedJoinStopsAtLimit",
+      "sha256": "sha256:c7c3941fd726ecc56c14092e26d1a17308d7b3fc5b4f60919b000ac357617a8a",
+      "code_behavior": "hypothetical"
+    }
+  ]
+}
