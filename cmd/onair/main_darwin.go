@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gitdek/onair/internal/archive"
+	"github.com/gitdek/onair/internal/diag"
 	"github.com/gitdek/onair/internal/live"
 	"github.com/gitdek/onair/internal/localmodel"
 	"github.com/gitdek/onair/internal/mac"
@@ -51,6 +52,11 @@ func main() {
 	// are On Air's own. Recordings are handed to the folder picked from the
 	// menu, and to a folder of On Air's own until one is.
 	support := filepath.Join(home, "Library", "Application Support", "On Air")
+	// The live side's diagnostic log, of counts and codes only, is On
+	// Air's own as well.
+	if err := os.MkdirAll(support, 0o700); err == nil && diag.Open(filepath.Join(support, "live-diag.log")) == nil {
+		diag.Printf("On Air starts, keeping this log of the live side")
+	}
 	// The live side runs apart from the recorder, on goroutines of its own,
 	// and hears what the recorder does through the edge it is given. It
 	// asks On the Record only at its read-only door on this Mac.
@@ -61,7 +67,7 @@ func main() {
 	// The model asked about the call runs on this Mac, from the Python
 	// environment tools/setup-models makes in On Air's own folder.
 	judges := map[string]live.Judge{recorder.Local: localmodel.New(filepath.Join(support, "models", "venv", "bin", "python"))}
-	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges)
+	follow := live.Start(live.Defaults, door, screen{support: support}, time.Now, judges)
 	app := recorder.New(live.Tap(edge{}, follow), recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app, follow})
@@ -100,18 +106,47 @@ func (edge) Choices(c recorder.Choices) {
 	mac.Choices(c.Open, displays, c.Area, c.Window, c.Folder, c.Live, c.Judge)
 }
 
-// screen is the Mac, as the live side asks things of it.
-type screen struct{}
+// screen is the Mac, as the live side asks things of it. Support is On
+// Air's own folder.
+type screen struct{ support string }
 
-func (screen) Ask()                                { mac.LiveAsk() }
-func (screen) Listen(on bool, chunk time.Duration) { mac.Listen(on, chunk.Seconds()) }
+func (screen) Ask()            { mac.LiveAsk() }
+func (screen) Log(line string) { diag.Printf("%s", line) }
+func (s screen) Listen(on bool, chunk time.Duration) {
+	voices := mac.BothVoices
+	if on {
+		voices = s.voices()
+	}
+	mac.Listen(on, chunk.Seconds(), voices)
+}
+
+// voices is the sounds to recognize: both, unless a file in On Air's own
+// folder, live-mic-only or live-call-only, asks for one alone when a
+// recording starts, to see whether the two get in each other's way.
+func (s screen) voices() int {
+	mic, call := exists(filepath.Join(s.support, "live-mic-only")), exists(filepath.Join(s.support, "live-call-only"))
+	switch {
+	case mic && call:
+		diag.Printf("both live-mic-only and live-call-only are there, so both sounds are recognized")
+	case mic:
+		return mac.MicVoice
+	case call:
+		return mac.CallVoice
+	}
+	return mac.BothVoices
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 func (screen) Show(p live.Panel) {
 	var links []mac.Link
 	for _, l := range p.Links {
 		links = append(links, mac.Link{Kind: l.Kind.String(), Title: l.Title, Date: l.Date, Why: l.Why, URL: l.URL})
 	}
-	mac.ShowPanel(p.Visible, p.Display, p.Status, p.Calls, links)
+	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, links)
 }
 
 // bridge is the recorder and the live side, as the Mac reports things to
@@ -199,6 +234,8 @@ func (b bridge) Live(code int, message string) {
 		b.follow.Report(live.SpeechFailed, message)
 	case mac.LiveDropped:
 		b.follow.Report(live.SoundDropped, message)
+	case mac.LiveDiag:
+		diag.Printf("%s", message)
 	}
 }
 

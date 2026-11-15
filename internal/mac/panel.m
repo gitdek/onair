@@ -61,10 +61,13 @@ static CGFloat OALabel(NSView *into, NSString *text, NSFont *font, NSColor *colo
     return height;
 }
 
-NSView *OAPanelContent(NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     OAFlipped *content = [[OAFlipped alloc] initWithFrame:NSMakeRect(0, 0, panelWidth, 100)];
     CGFloat inner = panelWidth - 2 * margin, y = margin;
     y += OALabel(content, @"Live Context", [NSFont boldSystemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 1) + 4;
+    // Its digits keep their width, so the line doesn't shift as they count.
+    CGFloat h = OALabel(content, headline, [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular], NSColor.secondaryLabelColor, margin, y, inner, 3);
+    y += h > 0 && status.length ? h + 4 : h;
     y += OALabel(content, status, [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 5);
     for (NSString *said in calls) {
         y += 6;
@@ -153,13 +156,13 @@ static NSPanel *OAPanel(void) {
     return panel;
 }
 
-void OAPanelShow(BOOL visible, NSString *display, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+void OAPanelShow(BOOL visible, NSString *display, NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     if (!visible) {
         [panel orderOut:nil];
         return;
     }
     NSPanel *p = OAPanel();
-    NSView *content = OAPanelContent(status, calls, links);
+    NSView *content = OAPanelContent(headline, status, calls, links);
     NSRect size = content.frame;
     background.frame = size;
     background.subviews = @[ content ];

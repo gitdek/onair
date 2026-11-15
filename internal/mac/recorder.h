@@ -55,6 +55,13 @@ enum {
     ONAIR_LIVE_UNSUPPORTED = 3, // the Mac can't recognize the language by itself; the message names it
     ONAIR_LIVE_FAILED = 4,      // recognition reported an error; the message says what
     ONAIR_LIVE_DROPPED = 5,     // sound was dropped because recognition fell behind; the message is how many buffers so far
+    ONAIR_LIVE_DIAG = 6,        // a line for the diagnostic log, of counts, kinds and codes only
+};
+
+// Which of capture's two sounds onair_live_listen recognizes.
+enum {
+    ONAIR_VOICE_CALL = 1, // the call's sound
+    ONAIR_VOICE_MIC = 2,  // the microphone
 };
 
 // Whose words onairHeard reports.
@@ -175,14 +182,15 @@ void onair_reveal(const char *path);
 // ONAIR_LIVE_REFUSED follows.
 void onair_live_ask(void);
 // LiveListen starts or stops recognizing speech in capture's two sounds,
-// on the Mac only, and returns at once. While on, onairHeard reports the
-// finished words of each sound about every chunk seconds, and onairLive
-// reports what goes wrong.
-void onair_live_listen(int on, double chunk);
-// LiveShow sets what the live panel shows, or hides it: a status line,
-// what a model said about the call, a line each, and links. Any thread may
-// call it.
-void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_link *links, int count);
+// those of the ONAIR_VOICE_* in voices, on the Mac only, and returns at
+// once. While on, onairHeard reports the finished words of each sound
+// about every chunk seconds, and onairLive reports what goes wrong, and
+// what the diagnostic log counts.
+void onair_live_listen(int on, double chunk, int voices);
+// LiveShow sets what the live panel shows, or hides it: a line under its
+// title, a status line, what a model said about the call, a line each, and
+// links. Any thread may call it.
+void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_link *links, int count);
 // Quit ends the app.
 void onair_quit(void);
 

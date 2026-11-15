@@ -106,6 +106,16 @@ const (
 	LiveUnsupported = int(C.ONAIR_LIVE_UNSUPPORTED)
 	LiveFailed      = int(C.ONAIR_LIVE_FAILED)
 	LiveDropped     = int(C.ONAIR_LIVE_DROPPED)
+	// LiveDiag is a line for the diagnostic log: counts, kinds and codes,
+	// never words that were said.
+	LiveDiag = int(C.ONAIR_LIVE_DIAG)
+)
+
+// Which of capture's two sounds Listen recognizes.
+const (
+	CallVoice  = int(C.ONAIR_VOICE_CALL) // the call's sound
+	MicVoice   = int(C.ONAIR_VOICE_MIC)  // the microphone
+	BothVoices = CallVoice | MicVoice
 )
 
 // Whose words Heard reports.
@@ -409,19 +419,22 @@ func Choices(open bool, displays []Choice, area, window, folder string, live boo
 // follows.
 func LiveAsk() { C.onair_live_ask() }
 
-// Listen starts or stops recognizing speech in capture's two sounds, on
-// the Mac only, and returns at once. While on, Heard reports the finished
-// words of each about every chunk seconds.
-func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chunk)) }
+// Listen starts or stops recognizing speech in capture's two sounds, those
+// of CallVoice and MicVoice in voices, on the Mac only, and returns at
+// once. While on, Heard reports the finished words of each about every
+// chunk seconds.
+func Listen(on bool, chunk float64, voices int) {
+	C.onair_live_listen(flag(on), C.double(chunk), C.int(voices))
+}
 
 // Link is a link the live panel shows.
 type Link struct{ Kind, Title, Date, Why, URL string }
 
 // ShowPanel sets what the live panel shows, beside a display named as
-// Display.ID names it, or the main one when empty: a status line, what a
-// model said, a line each, and links. It hides the panel when visible is
-// false, and returns at once.
-func ShowPanel(visible bool, display, status string, calls []string, links []Link) {
+// Display.ID names it, or the main one when empty: a line under its title,
+// a status line, what a model said, a line each, and links. It hides the
+// panel when visible is false, and returns at once.
+func ShowPanel(visible bool, display, headline, status string, calls []string, links []Link) {
 	n := len(links)
 	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -440,7 +453,7 @@ func ShowPanel(visible bool, display, status string, calls []string, links []Lin
 	for i, l := range links {
 		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
 	}
-	C.onair_live_show(flag(visible), str(display), str(status), str(strings.Join(calls, "\n")), list, C.int(n))
+	C.onair_live_show(flag(visible), str(display), str(headline), str(status), str(strings.Join(calls, "\n")), list, C.int(n))
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,

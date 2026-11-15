@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,6 +67,7 @@ type answer struct {
 	ask   int
 	found Found
 	err   error
+	took  time.Duration
 }
 
 // Start starts a controller with the numbers in cfg. A nil archive answers
@@ -194,6 +196,7 @@ type sent struct {
 	panel     Panel
 	shown     bool
 	judge     Judge
+	shows     string // what the diagnostic log last said the panel shows
 }
 
 func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err error) {
@@ -215,15 +218,40 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err
 	f.capturing(display, leftOut)
 	f.record(recording, now)
 	for _, r := range reports {
+		c.log("speech %s: %s", map[Problem]string{SpeechAllowed: "allowed", SpeechRefused: "refused", SpeechUnsupported: "unsupported", SpeechFailed: "failed", SoundDropped: "dropped"}[r.problem], line(r.detail, 160))
 		f.report(r.problem, r.detail, now)
 	}
-	for _, h := range heard {
-		f.hear(h, now)
+	if len(heard) > 0 {
+		person, others := 0, 0
+		for _, h := range heard {
+			if n := len(strings.Fields(h.Text)); h.Speaker == Person {
+				person += n
+			} else {
+				others += n
+			}
+			f.hear(h, now)
+		}
+		all, mine := f.words()
+		c.log("heard %d pieces, %d words yours and %d others, listening %t; the window holds %d words, %d yours", len(heard), person, others, f.listening(), all, mine)
 	}
 	if got != nil {
+		taken := got.ask != 0 && got.ask == f.asking
 		f.answer(got.ask, got.found, got.err, now)
+		switch {
+		case !taken:
+			c.log("ask %d came back after %s, too late to be taken", got.ask, got.took.Round(time.Millisecond))
+		case got.err != nil:
+			c.log("ask %d failed after %s: %s", got.ask, got.took.Round(time.Millisecond), brief(got.err))
+		default:
+			c.log("ask %d answered in %s: %d meetings, %d notes, %d items, %d strong, %d picked", got.ask, got.took.Round(time.Millisecond),
+				len(got.found.Meetings), len(got.found.Notes), len(got.found.Items), len(got.found.StrongMeetings)+len(got.found.StrongItems), len(pick(got.found, c.cfg.Most)))
+		}
 	}
-	f.abandon(now)
+	if waiting := f.asking; waiting != 0 {
+		if f.abandon(now); f.asking == 0 {
+			c.log("ask %d given up on after %s", waiting, now.Sub(f.asked).Round(time.Millisecond))
+		}
+	}
 	// A judge runs only while chosen with Live Context on, and one that
 	// is no longer wanted is stopped.
 	judge := c.judges[name]
@@ -239,28 +267,53 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err
 	}
 	f.judge(judge != nil)
 	if judged != nil {
+		taken := judged.round != 0 && judged.round == f.inRound
 		f.judgement(judged.round, judged.records, judged.v, judged.err, now)
+		switch {
+		case !taken:
+			c.log("round %d came back too late to be taken", judged.round)
+		case judged.err != nil:
+			c.log("round %d failed: %s", judged.round, brief(judged.err))
+		case judged.v.Topic >= Thresholds.Topic:
+			c.log("round %d judged: decision %.2f, topic changed %.2f, so the window was emptied", judged.round, judged.v.Decision, judged.v.Topic)
+		default:
+			c.log("round %d judged: decision %.2f, topic changed %.2f", judged.round, judged.v.Decision, judged.v.Topic)
+		}
 	}
 	f.abandonRound(now)
 	if listening := f.listening(); listening != s.listening {
+		c.log("listen %t", listening)
 		c.screen.Listen(listening, c.cfg.Chunk)
 		s.listening = listening
 	}
 	if c.out.Load() < inFlight {
 		if text, ask, ok := f.due(now); ok {
+			c.log("ask %d sent, %d words", ask, len(strings.Fields(text)))
 			c.ask(text, ask)
 		}
 	}
 	if judge != nil && c.judging.Load() < inFlight {
 		if r, round, ok := f.roundDue(now); ok {
+			c.log("round %d sent, %d words", round, len(strings.Fields(r.Text)))
 			c.round(judge, r, round)
 		}
 	}
 	if p := f.panel(now); !s.shown || !reflect.DeepEqual(p, s.panel) {
 		c.screen.Show(p)
 		s.panel, s.shown = p, true
+		if shows := f.shows(p, now); shows != s.shows {
+			c.log("panel %s", shows)
+			s.shows = shows
+		}
 	}
 	return nil
+}
+
+// log adds a line to the diagnostic log, when the Screen keeps one.
+func (c *Controller) log(format string, args ...any) {
+	if l, ok := c.screen.(Logger); ok {
+		l.Log(fmt.Sprintf(format, args...))
+	}
 }
 
 // ask asks On the Record on a goroutine of its own, for at most
@@ -271,10 +324,12 @@ func (c *Controller) ask(text string, ask int) {
 	c.out.Add(1)
 	go func() {
 		a := answer{ask: ask}
+		began := c.now()
 		defer func() {
 			if r := recover(); r != nil {
 				a.found, a.err = Found{}, fmt.Errorf("asking On the Record failed: %v", r)
 			}
+			a.took = c.now().Sub(began)
 			c.out.Add(-1)
 			select {
 			case c.answers <- a:

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -247,4 +248,51 @@ func TestANilControllerTakesInputs(t *testing.T) {
 	c.Recording(true)
 	c.Heard(Heard{Text: "words"})
 	c.Report(SpeechRefused, "")
+}
+
+// logScreen is the Mac, keeping the diagnostic log's lines as well.
+type logScreen struct {
+	fakeScreen
+	lines []string
+}
+
+func (s *logScreen) Log(line string) {
+	s.mu.Lock()
+	s.lines = append(s.lines, line)
+	s.mu.Unlock()
+}
+
+func TestTheLogHoldsNeitherWordsNorWhatTheArchiveSaid(t *testing.T) {
+	screen := &logScreen{}
+	var n atomic.Int32
+	archive := &fakeArchive{answer: func(context.Context, string) (Found, error) {
+		if n.Add(1) == 1 {
+			found := strong("m1")
+			found.Meetings[0].Title = "Zebrafish review"
+			return found, nil
+		}
+		return Found{}, errors.New("On the Record refused the question: no zebrafish here")
+	}}
+	c := Start(fast, archive, screen, time.Now, nil)
+	defer c.Enabled(false)
+	c.Enabled(true)
+	c.Capturing("", true)
+	c.Recording(true)
+	c.Report(SpeechAllowed, "")
+	c.Heard(Heard{Speaker: Person, Text: "the zebrafish launch", From: time.Now(), To: time.Now()})
+	c.Heard(Heard{Speaker: Others, Text: "and the zebrafish price", From: time.Now(), To: time.Now()})
+	waitFor(t, "a link", func() bool { return len(screen.last().Links) == 1 })
+	c.Heard(Heard{Speaker: Others, Text: "zebrafish again", From: time.Now(), To: time.Now()})
+	waitFor(t, "a failed question", func() bool { return strings.Contains(screen.last().Status, "Couldn't ask") })
+	screen.mu.Lock()
+	lines := strings.Join(screen.lines, "\n")
+	screen.mu.Unlock()
+	if strings.Contains(strings.ToLower(lines), "zebrafish") {
+		t.Fatalf("the log holds what was said or answered:\n%s", lines)
+	}
+	for _, want := range []string{"speech allowed", "words yours", "listen true", "ask 1 sent", "ask 1 answered in", "1 picked", "ask 2 failed after", ": On the Record refused the question", "panel shown"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("the log doesn't say %q:\n%s", want, lines)
+		}
+	}
 }

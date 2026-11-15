@@ -27,6 +27,10 @@ type follow struct {
 	asking int       // the question waiting for an answer, or 0
 	asks   int       // questions asked so far, which number them
 
+	// How the last question that ended went, and when it was asked.
+	result   string
+	resultAt time.Time
+
 	shown map[string]time.Time // when each link was last put on the panel
 	links []Link               // on the panel, newest first
 
@@ -38,11 +42,12 @@ type follow struct {
 	calls   []call    // what the judge said, newest first, one of each kind
 	verdict string    // what went wrong asking the judge, if anything
 
-	speech    string // what is wrong with listening, if anything
-	transient bool   // and it goes once words are heard again
-	archive   string // what went wrong asking On the Record, if anything
-	answered  string // a word on the last answer
-	dropped   string // that sound was left out, if it was
+	allowed   Problem // SpeechAllowed, SpeechRefused or SpeechUnsupported, once the Mac has said
+	speech    string  // what is wrong with listening, if anything
+	transient bool    // and it goes once words are heard again
+	archive   string  // what went wrong asking On the Record, if anything
+	answered  string  // a word on the last answer
+	dropped   string  // that sound was left out, if it was
 }
 
 func newFollow(cfg Config) *follow {
@@ -87,7 +92,7 @@ func (f *follow) record(on bool, now time.Time) {
 	switch {
 	case on && !f.recording:
 		f.heard, f.fresh, f.links = nil, false, nil
-		f.asking, f.asked = 0, time.Time{}
+		f.asking, f.asked, f.result, f.resultAt = 0, time.Time{}, "", time.Time{}
 		f.news, f.calls, f.inRound, f.judged, f.verdict = false, nil, 0, time.Time{}, ""
 		f.speech, f.transient, f.archive, f.answered, f.dropped = "", false, "", "", ""
 	case !on && f.recording:
@@ -98,6 +103,9 @@ func (f *follow) record(on bool, now time.Time) {
 
 // report takes what the Mac says about listening.
 func (f *follow) report(p Problem, detail string, now time.Time) {
+	if p == SpeechAllowed || p == SpeechRefused || p == SpeechUnsupported {
+		f.allowed = p
+	}
 	switch p {
 	case SpeechAllowed:
 		// A refusal, or a language the Mac couldn't recognize, no longer
@@ -302,10 +310,13 @@ func (f *follow) answer(ask int, found Found, err error, now time.Time) {
 	f.asking = 0
 	if err != nil {
 		f.archive, f.answered = "Couldn't ask On the Record: "+sentence(err.Error()), ""
+		f.result, f.resultAt = brief(err), f.asked
 		return
 	}
 	f.archive = ""
-	if f.merge(pick(found, f.cfg.Most), now) == 0 {
+	picked := pick(found, f.cfg.Most)
+	f.result, f.resultAt = plural(len(picked), "link"), f.asked
+	if f.merge(picked, now) == 0 {
 		f.answered = fmt.Sprintf("Nothing new from On the Record at %s.", now.Format("15:04"))
 	} else {
 		f.answered = ""
@@ -320,6 +331,7 @@ func (f *follow) abandon(now time.Time) {
 	}
 	f.asking = 0
 	f.archive, f.answered = fmt.Sprintf("Couldn't ask On the Record: it didn't answer within %s.", f.cfg.Timeout), ""
+	f.result, f.resultAt = fmt.Sprintf("no answer within %s", f.cfg.Timeout), f.asked
 }
 
 // merge puts the links not shown in the last f.cfg.Quiet on top of the
@@ -366,6 +378,7 @@ func (f *follow) panel(now time.Time) Panel {
 		p.Links = nil
 		return p
 	}
+	p.Headline = f.headline(now)
 	for _, c := range f.calls {
 		if now.Sub(c.at) < f.cfg.Hold {
 			p.Calls = append(p.Calls, c.text)
@@ -400,6 +413,106 @@ func (f *follow) panel(now time.Time) Panel {
 	}
 	p.Status = strings.Join(said, " ")
 	return p
+}
+
+// recent counts the words said in the last f.cfg.Window, the person's and
+// everyone else's, by when they were said: the window itself is only
+// trimmed when words come.
+func (f *follow) recent(now time.Time) (person, others int) {
+	since := now.Add(-f.cfg.Window)
+	for _, h := range f.heard {
+		if h.To.Before(since) {
+			continue
+		}
+		if n := len(strings.Fields(h.Text)); h.Speaker == Person {
+			person += n
+		} else {
+			others += n
+		}
+	}
+	return person, others
+}
+
+// headline is the line under the panel's title: whether speech may be
+// recognized, the words heard in the last minute, the person's and
+// everyone else's, and how the last question to On the Record went. It
+// changes no more often than every five seconds unless something happens,
+// so the panel isn't redrawn under a click.
+func (f *follow) headline(now time.Time) string {
+	speech := "Speech: no answer yet"
+	switch f.allowed {
+	case SpeechAllowed:
+		speech = "Speech allowed"
+	case SpeechRefused:
+		speech = "Speech not allowed"
+	case SpeechUnsupported:
+		speech = "Speech can't run on this Mac"
+	}
+	person, others := f.recent(now)
+	ask := "not asked yet"
+	switch {
+	case f.asking != 0:
+		ask = "asking…"
+	case !f.resultAt.IsZero():
+		ask = "asked " + ago(now.Sub(f.resultAt)) + ": " + f.result
+	}
+	return fmt.Sprintf("%s · last minute: %d words yours, %d others · %s", speech, person, others, ask)
+}
+
+// ago says how long ago, in steps of five seconds, then of minutes.
+func ago(d time.Duration) string {
+	switch {
+	case d < 5*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%d s ago", int(d/(5*time.Second))*5)
+	}
+	return fmt.Sprintf("%d min ago", int(d/time.Minute))
+}
+
+func plural(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
+}
+
+// brief is an error in On Air's own words: what it says before a colon.
+// What follows one may come from another program, such as On the Record,
+// and is left out.
+func brief(err error) string {
+	said, _, _ := strings.Cut(err.Error(), ": ")
+	return line(strings.TrimSuffix(strings.TrimSpace(said), "."), 80)
+}
+
+// shows is what the panel shows, for the diagnostic log: the kinds of line
+// in its status, and counts. Never what was said, what went wrong in
+// another program's words, or what On the Record answered.
+func (f *follow) shows(p Panel, now time.Time) string {
+	if !p.Visible {
+		return "hidden"
+	}
+	var kinds []string
+	add := func(on bool, kind string) {
+		if on {
+			kinds = append(kinds, kind)
+		}
+	}
+	add(!f.recording, "recording stopped")
+	add(f.speech != "" && f.transient, "speech failed")
+	add(f.speech != "" && !f.transient && f.allowed == SpeechRefused, "speech refused")
+	add(f.speech != "" && !f.transient && f.allowed == SpeechUnsupported, "speech unsupported")
+	add(!f.leftOut, "panel may be in the recording")
+	add(f.archive != "", "question failed")
+	add(f.verdict != "", "model failed")
+	add(f.dropped != "", "sound dropped")
+	add(f.answered != "", "nothing new")
+	if len(kinds) == 0 {
+		kinds = append(kinds, "listening")
+	}
+	person, others := f.recent(now)
+	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s; status: %s",
+		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), strings.Join(kinds, ", "))
 }
 
 // sentence ends what another part said with a full stop, if it has none.

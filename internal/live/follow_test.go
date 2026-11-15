@@ -220,7 +220,7 @@ func TestAnAnswerNothingWaitsForIsDropped(t *testing.T) {
 		t.Fatal("a question was given up on before its time")
 	}
 	f.abandon(at(15).Add(Defaults.Timeout + 1001*time.Millisecond))
-	if p := f.panel(at(20)); !strings.Contains(p.Status, "didn't answer within 4s") {
+	if p := f.panel(at(20)); !strings.Contains(p.Status, "didn't answer within 10s") {
 		t.Fatalf("a question given up on shows %q", p.Status)
 	}
 	second := asked(t, f, at(31))
@@ -333,5 +333,42 @@ func TestWhatGoesWrongIsSaidInThePanel(t *testing.T) {
 	f.record(true, at(8))
 	if p := f.panel(at(8)); p.Status != "This recording started before Live Context was on, so the panel may be in it. Listening…" {
 		t.Fatalf("a recording that doesn't leave the panel out shows %q", p.Status)
+	}
+}
+
+func TestTheHeadlineSaysWhatTheLiveSideDid(t *testing.T) {
+	f := listening(Defaults)
+	if got := f.panel(t0).Headline; got != "Speech: no answer yet · last minute: 0 words yours, 0 others · not asked yet" {
+		t.Fatalf("at first the headline says %q", got)
+	}
+	f.report(SpeechAllowed, "", t0)
+	f.hear(Heard{Speaker: Person, Text: "one two", To: at(1)}, at(1))
+	first := asked(t, f, at(2))
+	if got := f.panel(at(3)).Headline; got != "Speech allowed · last minute: 2 words yours, 8 others · asking…" {
+		t.Fatalf("while asking the headline says %q", got)
+	}
+	f.answer(first, strong("m1"), nil, at(4))
+	if got := f.panel(at(14)).Headline; got != "Speech allowed · last minute: 2 words yours, 8 others · asked 10 s ago: 1 link" {
+		t.Fatalf("after an answer the headline says %q", got)
+	}
+	// Words leave the last minute as time passes, though nothing new is
+	// heard.
+	if got := f.panel(at(61.5)).Headline; got != "Speech allowed · last minute: 0 words yours, 8 others · asked 55 s ago: 1 link" {
+		t.Fatalf("a minute on the headline says %q", got)
+	}
+	// What went wrong is said in On Air's own words, without what another
+	// program added.
+	f.answer(asked(t, f, at(70)), Found{}, errors.New("On the Record refused the question: what it said"), at(71))
+	if got := f.panel(at(71)).Headline; !strings.HasSuffix(got, " · asked just now: On the Record refused the question") {
+		t.Fatalf("after a failed question the headline says %q", got)
+	}
+	asked(t, f, at(90))
+	f.abandon(at(90).Add(Defaults.Timeout + 2*time.Second))
+	if got := f.panel(at(102)).Headline; !strings.HasSuffix(got, " · asked 10 s ago: no answer within 10s") {
+		t.Fatalf("after a question given up on the headline says %q", got)
+	}
+	f.report(SpeechRefused, "it was refused", at(103))
+	if got := f.panel(at(103)).Headline; !strings.HasPrefix(got, "Speech not allowed · ") {
+		t.Fatalf("after a refusal the headline says %q", got)
 	}
 }

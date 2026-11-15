@@ -89,12 +89,23 @@ type Screen interface {
 	Show(Panel)
 }
 
+// Logger is what a Screen may also do: keep the lines of a diagnostic log,
+// which say where words go missing in counts and kinds only, never words
+// that were said or anything On the Record answered.
+type Logger interface {
+	Log(line string)
+}
+
 // Panel is what the panel shows. One that isn't Visible is hidden.
 type Panel struct {
 	Visible bool
 	// Display is the display the panel sits at the right edge of: the one
 	// being recorded, or the main one when empty.
 	Display string
+	// Headline is the line under the panel's title: whether speech may be
+	// recognized, the words heard in the last minute, the person's and
+	// everyone else's, and how the last question to On the Record went.
+	Headline string
 	// Status is a line or two on what the live side is doing, or what is
 	// wrong.
 	Status string
@@ -185,7 +196,7 @@ var Defaults = Config{
 	Chars:   4000,
 	Most:    3,
 	Quiet:   5 * time.Minute,
-	Timeout: 4 * time.Second,
+	Timeout: 10 * time.Second,
 	Chunk:   15 * time.Second,
 	Linger:  2 * time.Minute,
 	Tick:    time.Second,
