@@ -2,9 +2,12 @@
 // of a call connects to, through its read-only door on this Mac. It speaks
 // MCP, JSON-RPC over HTTP, to a loopback address only: it refuses any
 // other, dials nothing else, uses no proxy and follows no redirect, so
-// nothing it sends leaves the Mac. It calls one tool, find_connections,
-// which only reads. It decides nothing: what to make of the answer is
-// internal/live's.
+// nothing it sends leaves the Mac. It calls two tools, which only read:
+// find_connections, and gather_context, which it never asks for the
+// screen's moments, which the archive's owners may have a hosted model
+// match, and asks only in plain words, never in the filters its search
+// reads, such as in:screen. It decides nothing: what to make of the answer
+// is internal/live's.
 package archive
 
 import (
@@ -39,6 +42,11 @@ const (
 	maxAnswer = 4 << 20 // bytes of an answer
 	maxText   = 50000   // characters of a question, find_connections' own limit
 	perKind   = 5       // meetings, notebook entries and action items asked for
+	maxTopic  = 2000    // characters of a topic, gather_context's own limit
+	// briefItems is how many passages of the notes a brief is asked for:
+	// enough to hold an answer, and few enough that the archive answers in
+	// about two seconds.
+	briefItems = 8
 )
 
 // Client asks On the Record. Several goroutines may use it at once.
@@ -99,29 +107,79 @@ func (c *Client) Connections(ctx context.Context, text string) (live.Found, erro
 	if len(text) > maxText {
 		text = text[len(text)-maxText:]
 	}
+	result, err := c.call(ctx, "find_connections", map[string]any{"text": text, "limit": perKind})
+	if err != nil {
+		return live.Found{}, err
+	}
 	var out found
-	if err := c.call(ctx, "find_connections", map[string]any{"text": text, "limit": perKind}, &out); err != nil {
+	if err := decode(result, &out); err != nil {
 		return live.Found{}, err
 	}
 	return out.live(), nil
 }
 
+// Answer asks On the Record's gather_context what it knows about a
+// question, in plain words, for a brief of briefItems passages of the
+// notes, with passages of the transcripts when transcript is true, and
+// never the screen's moments.
+func (c *Client) Answer(ctx context.Context, question string, transcript bool) (live.Brief, error) {
+	result, err := c.call(ctx, "gather_context", map[string]any{"topic": topic(question), "max_items": briefItems,
+		"include_transcript": transcript, "include_screen": false})
+	if err != nil {
+		return live.Brief{}, err
+	}
+	texts, _, err := content(result)
+	if err != nil {
+		return live.Brief{}, err
+	}
+	if len(texts) == 0 {
+		return live.Brief{}, errors.New("On the Record's answer had no brief")
+	}
+	b := live.Brief{Points: points(texts[0])}
+	if len(texts) > 1 {
+		var counts struct {
+			Passages int `json:"passages"`
+		}
+		if json.Unmarshal([]byte(texts[1]), &counts) == nil {
+			b.Passages = counts.Passages
+		}
+	}
+	return b, nil
+}
+
+// topic is a question as On the Record is asked about it: its words, with
+// none of the marks its search reads as a filter, such as in:screen,
+// person:name, @name, "a phrase" or -word, and maxTopic characters at most.
+func topic(question string) string {
+	words := strings.Fields(strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`:"“”„@`, r) {
+			return ' '
+		}
+		return r
+	}, question))
+	for i, w := range words {
+		words[i] = strings.TrimLeft(w, "-–—")
+	}
+	t := strings.Join(strings.Fields(strings.Join(words, " ")), " ")
+	if r := []rune(t); len(r) > maxTopic {
+		t = string(r[:maxTopic])
+	}
+	return t
+}
+
 // call calls a tool, starting a session first when there is none, and
 // starting a new one, once, when the server has forgotten it.
-func (c *Client) call(ctx context.Context, tool string, args map[string]any, out any) error {
+func (c *Client) call(ctx context.Context, tool string, args map[string]any) (json.RawMessage, error) {
 	for again := true; ; again = false {
 		if err := c.start(ctx); err != nil {
-			return err
+			return nil, err
 		}
 		result, err := c.request(ctx, "tools/call", map[string]any{"name": tool, "arguments": args})
 		if errors.Is(err, errForgotten) && again {
 			c.forget()
 			continue
 		}
-		if err != nil {
-			return err
-		}
-		return decode(result, out)
+		return result, err
 	}
 }
 
@@ -317,9 +375,9 @@ func plain(ctx context.Context, err error) error {
 	return fmt.Errorf("On the Record couldn't be reached: %w", err)
 }
 
-// decode reads a tool's result: its structured content, or else the JSON
-// in its text. A tool that failed says why in its text.
-func decode(result json.RawMessage, out any) error {
+// content reads a tool's result: the texts of its content, in order, and
+// its structured content. A tool that failed says why in its text.
+func content(result json.RawMessage) ([]string, json.RawMessage, error) {
 	var r struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -329,26 +387,40 @@ func decode(result json.RawMessage, out any) error {
 		IsError    bool            `json:"isError"`
 	}
 	if err := json.Unmarshal(result, &r); err != nil {
-		return errors.New("On the Record's answer couldn't be read")
+		return nil, nil, errors.New("On the Record's answer couldn't be read")
 	}
-	text := ""
+	var texts []string
 	for _, c := range r.Content {
 		if c.Type == "text" {
-			text = c.Text
-			break
+			texts = append(texts, c.Text)
 		}
 	}
 	if r.IsError {
-		if text == "" {
-			text = "it gave no reason"
+		why := "it gave no reason"
+		if len(texts) > 0 && texts[0] != "" {
+			why = texts[0]
 		}
-		return fmt.Errorf("On the Record couldn't answer: %s", clip(text))
+		return nil, nil, fmt.Errorf("On the Record couldn't answer: %s", clip(why))
 	}
-	if len(r.Structured) > 0 && string(r.Structured) != "null" {
-		if err := json.Unmarshal(r.Structured, out); err != nil {
+	return texts, r.Structured, nil
+}
+
+// decode reads a tool's result: its structured content, or else the JSON
+// in its text.
+func decode(result json.RawMessage, out any) error {
+	texts, structured, err := content(result)
+	if err != nil {
+		return err
+	}
+	if len(structured) > 0 && string(structured) != "null" {
+		if err := json.Unmarshal(structured, out); err != nil {
 			return errors.New("On the Record's answer wasn't in the shape On Air reads")
 		}
 		return nil
+	}
+	text := ""
+	if len(texts) > 0 {
+		text = texts[0]
 	}
 	if err := json.Unmarshal([]byte(text), out); err != nil {
 		return errors.New("On the Record's answer wasn't in the shape On Air reads")

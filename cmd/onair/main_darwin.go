@@ -118,7 +118,15 @@ func (screen) Show(p live.Panel) {
 	for _, l := range p.Links {
 		links = append(links, mac.Link{Kind: l.Kind.String(), Title: l.Title, Date: l.Date, Why: l.Why, URL: l.URL})
 	}
-	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, links)
+	var answers []mac.Answer
+	for _, a := range p.Answers {
+		answer := mac.Answer{Question: a.Question, Note: a.Note}
+		for _, l := range a.Lines {
+			answer.Lines = append(answer.Lines, mac.AnswerLine{Text: l.Text, Where: l.Where, URL: l.URL})
+		}
+		answers = append(answers, answer)
+	}
+	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, answers, links)
 }
 
 // bridge is the recorder and the live side, as the Mac reports things to

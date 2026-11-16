@@ -61,7 +61,14 @@ static CGFloat OALabel(NSView *into, NSString *text, NSFont *font, NSColor *colo
     return height;
 }
 
-NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+// OAOpenable is a link's URL when a browser can open it, http or https.
+static NSURL *OAOpenable(NSString *link) {
+    NSURL *url = [NSURL URLWithString:link ?: @""];
+    return [url.scheme isEqualToString:@"http"] || [url.scheme isEqualToString:@"https"] ? url : nil;
+}
+
+NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *answers,
+                       NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     OAFlipped *content = [[OAFlipped alloc] initWithFrame:NSMakeRect(0, 0, panelWidth, 100)];
     CGFloat inner = panelWidth - 2 * margin, y = margin;
     y += OALabel(content, @"Live Context", [NSFont boldSystemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 1) + 4;
@@ -73,11 +80,39 @@ NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *>
         y += 6;
         y += OALabel(content, said, [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], NSColor.labelColor, margin, y, inner, 2);
     }
+    // Answer cards: a question as heard, then each line of its answer,
+    // indented, with where it was said under it, and a click opens that
+    // moment; or a word on it.
+    CGFloat indent = 10, lineWidth = inner - indent;
+    for (NSDictionary<NSString *, NSString *> *row in answers) {
+        NSString *kind = row[@"kind"] ?: @"";
+        if ([kind isEqualToString:@"question"]) {
+            y += gap;
+            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.labelColor, margin, y, inner, 2);
+        } else if ([kind isEqualToString:@"line"]) {
+            y += 4;
+            OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin + indent, y, lineWidth, 10)];
+            view.url = OAOpenable(row[@"link"]);
+            view.toolTip = view.url.absoluteString;
+            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:12], NSColor.labelColor, 0, 0, lineWidth, 2) + 1;
+            h += OALabel(view, row[@"where"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, h, lineWidth, 1);
+            view.frame = NSMakeRect(margin + indent, y, lineWidth, h);
+            [content addSubview:view];
+            y += h;
+        } else {
+            y += 3;
+            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin + indent, y, lineWidth, 2);
+        }
+    }
+    if (answers.count && links.count) {
+        y += gap + 2;
+        y += OALabel(content, @"Related", [NSFont boldSystemFontOfSize:10], NSColor.tertiaryLabelColor, margin, y, inner, 1) - gap + 2;
+    }
     for (NSDictionary<NSString *, NSString *> *link in links) {
         y += gap;
         OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin, y, inner, 10)];
         NSURL *url = [NSURL URLWithString:link[@"link"] ?: @""];
-        view.url = [url.scheme isEqualToString:@"http"] || [url.scheme isEqualToString:@"https"] ? url : nil;
+        view.url = OAOpenable(link[@"link"]);
         view.toolTip = url.absoluteString;
         NSString *kind = link[@"kind"] ?: @"", *date = link[@"date"] ?: @"";
         NSString *meta = kind.length && date.length ? [NSString stringWithFormat:@"%@ · %@", kind, date] : (kind.length ? kind : date);
@@ -156,13 +191,14 @@ static NSPanel *OAPanel(void) {
     return panel;
 }
 
-void OAPanelShow(BOOL visible, NSString *display, NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+void OAPanelShow(BOOL visible, NSString *display, NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *answers,
+                 NSArray<NSDictionary<NSString *, NSString *> *> *links) {
     if (!visible) {
         [panel orderOut:nil];
         return;
     }
     NSPanel *p = OAPanel();
-    NSView *content = OAPanelContent(headline, status, calls, links);
+    NSView *content = OAPanelContent(headline, status, calls, answers, links);
     NSRect size = content.frame;
     background.frame = size;
     background.subviews = @[ content ];

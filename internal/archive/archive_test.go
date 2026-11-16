@@ -51,6 +51,10 @@ type door struct {
 	session string // given at initialize, when set
 	answer  func(w http.ResponseWriter, id json.RawMessage)
 	forget  int // times to answer a call in the session with 404, as if it was forgotten
+	// gathered is the arguments of each gather_context call, which brief
+	// answers, or else made-up.
+	gathered []map[string]any
+	brief    func(w http.ResponseWriter, id json.RawMessage)
 }
 
 func (d *door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -58,16 +62,22 @@ func (d *door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 		Params struct {
-			Name      string `json:"name"`
+			Name      string          `json:"name"`
+			Raw       json.RawMessage `json:"arguments"`
 			Arguments struct {
 				Text  string `json:"text"`
 				Limit int    `json:"limit"`
-			} `json:"arguments"`
+			} `json:"-"`
 		} `json:"params"`
 	}
 	if r.Method != http.MethodPost || json.NewDecoder(r.Body).Decode(&m) != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+	var args map[string]any
+	if len(m.Params.Raw) > 0 {
+		json.Unmarshal(m.Params.Raw, &m.Params.Arguments)
+		json.Unmarshal(m.Params.Raw, &args)
 	}
 	d.mu.Lock()
 	d.methods = append(d.methods, m.Method+" "+m.Params.Name)
@@ -96,6 +106,15 @@ func (d *door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, m.ID, fmt.Sprintf(`{"content":[{"type":"text","text":%q}],"structuredContent":%s}`, connections, connections))
+	case m.Method == "tools/call" && m.Params.Name == "gather_context":
+		d.mu.Lock()
+		d.gathered = append(d.gathered, args)
+		d.mu.Unlock()
+		if d.brief != nil {
+			d.brief(w, m.ID)
+			return
+		}
+		reply(w, m.ID, fmt.Sprintf(`{"content":[{"type":"text","text":%q},{"type":"text","text":%q}]}`, madeUpBrief, `{"topic":"x","meetings":["m-1","m-2"],"passages":4,"semantic":true}`))
 	default:
 		reply(w, m.ID, "", `{"code":-32601,"message":"not on this door"}`)
 	}

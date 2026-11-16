@@ -453,11 +453,23 @@ func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chu
 // Link is a link the live panel shows.
 type Link struct{ Kind, Title, Date, Why, URL string }
 
+// Answer is an answer card the live panel shows: a question as heard, the
+// lines that answer it, and a word on it.
+type Answer struct {
+	Question string
+	Lines    []AnswerLine
+	Note     string
+}
+
+// AnswerLine is a line of an answer, where it was said, and the moment a
+// click opens.
+type AnswerLine struct{ Text, Where, URL string }
+
 // ShowPanel sets what the live panel shows, beside a display named as
 // Display.ID names it, or the main one when empty: a line under its title,
-// a status line, what a model said, a line each, and links. It hides the
-// panel when visible is false, and returns at once.
-func ShowPanel(visible bool, display, headline, status string, calls []string, links []Link) {
+// a status line, what a model said, a line each, answer cards and links.
+// It hides the panel when visible is false, and returns at once.
+func ShowPanel(visible bool, display, headline, status string, calls []string, answers []Answer, links []Link) {
 	n := len(links)
 	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -476,7 +488,21 @@ func ShowPanel(visible bool, display, headline, status string, calls []string, l
 	for i, l := range links {
 		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
 	}
-	C.onair_live_show(flag(visible), str(display), str(headline), str(status), str(strings.Join(calls, "\n")), list, C.int(n))
+	// Each card goes as rows: its question, its lines, and its word.
+	var rows []C.onair_answer
+	for _, a := range answers {
+		rows = append(rows, C.onair_answer{kind: str("question"), text: str(a.Question), where: str(""), link: str("")})
+		for _, l := range a.Lines {
+			rows = append(rows, C.onair_answer{kind: str("line"), text: str(l.Text), where: str(l.Where), link: str(l.URL)})
+		}
+		if a.Note != "" {
+			rows = append(rows, C.onair_answer{kind: str("note"), text: str(a.Note), where: str(""), link: str("")})
+		}
+	}
+	answerList := (*C.onair_answer)(C.malloc(C.size_t(max(len(rows), 1)) * C.size_t(unsafe.Sizeof(C.onair_answer{}))))
+	defer C.free(unsafe.Pointer(answerList))
+	copy(unsafe.Slice(answerList, max(len(rows), 1)), rows)
+	C.onair_live_show(flag(visible), str(display), str(headline), str(status), str(strings.Join(calls, "\n")), answerList, C.int(len(rows)), list, C.int(n))
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,

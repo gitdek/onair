@@ -1,7 +1,8 @@
 // Package live decides what On Air's live panel shows while it records: the
 // last minute or so of what was said, when to ask On the Record what that
 // minute connects to, and which of the links it answers with are worth
-// showing. It touches no screen, no network and no sound. The Mac
+// showing; and which questions asked in the call, or topics brought up, to
+// ask the archive about, and which lines of its answer to show. It touches no screen, no network and no sound. The Mac
 // recognizes speech and draws the panel, internal/archive asks On the
 // Record, and both report here.
 //
@@ -69,11 +70,38 @@ type Item struct {
 	Meeting, MeetingDate string
 }
 
+// Brief is what On the Record answered about a question: the lines of its
+// cited brief that come from meetings, in its order, and how many passages
+// of the meetings' notes it found.
+type Brief struct {
+	Points   []Point
+	Passages int
+}
+
+// Point is a line of a brief: a bullet of a meeting's notes, or a passage of
+// its transcript, with where it was said and what it sits under.
+type Point struct {
+	Text string
+	// Under is what it sits under: its topic's title and its section's
+	// heading in the meeting's notes.
+	Under         string
+	Meeting, Date string
+	// At is when it was said in the meeting, such as "6:12", when the brief
+	// says. URL opens that moment, or else the meeting.
+	At, URL string
+	// Said marks a passage of the transcript, not of the notes.
+	Said bool
+}
+
 // Archive is On the Record, as the live side asks it.
 type Archive interface {
 	// Connections asks what a stretch of the call connects to. It returns
 	// once ctx is done, if not before.
 	Connections(ctx context.Context, text string) (Found, error)
+	// Answer asks what the archive knows about a question asked in the
+	// call, or a topic brought up, with passages of the transcripts when
+	// transcript is true. It returns once ctx is done, if not before.
+	Answer(ctx context.Context, question string, transcript bool) (Brief, error)
 }
 
 // Screen is what the Mac does for the live side.
@@ -112,9 +140,26 @@ type Panel struct {
 	// Calls are what a judge said that cleared its thresholds, newest
 	// first, such as "Decision: agreed, at 15:04."
 	Calls []string
+	// Answers are answer cards, newest first, above the links.
+	Answers []Answer
 	// Links are newest first.
 	Links []Link
 }
+
+// Answer is an answer card: a question asked in the call, or a topic
+// brought up, as heard, the lines of On the Record's notes that answer it,
+// best first, and a word on it when there are none, such as that it is
+// still being asked or that the archive has no answer.
+type Answer struct {
+	Question string
+	Lines    []AnswerLine
+	Note     string
+}
+
+// AnswerLine is a line of an answer: what was noted, short enough for a
+// line or two, where it was said, such as "Pricing review · 2026-11-03 ·
+// 12:31", and the moment a click opens.
+type AnswerLine struct{ Text, Where, URL string }
 
 // Kind is what a link leads to.
 type Kind int
@@ -186,6 +231,10 @@ type Config struct {
 	JudgeEvery   time.Duration // the least time between two rounds of typed questions
 	JudgeTimeout time.Duration // how long a round may take
 	Hold         time.Duration // how long what a judge said stays in the panel
+
+	Cards      int           // answer cards on the panel at most
+	Again      time.Duration // how long a question asked isn't asked again
+	Transcript bool          // whether answers draw on the transcripts too, which takes the archive longer
 }
 
 // Defaults are the numbers On Air runs with.
@@ -204,4 +253,11 @@ var Defaults = Config{
 	JudgeEvery:   10 * time.Second,
 	JudgeTimeout: 2 * time.Second,
 	Hold:         2 * time.Minute,
+
+	Cards: 3,
+	Again: 3 * time.Minute,
+	// The archive took 2.0 s for a brief without the transcripts and 3.6 s
+	// with them, idle on the owner's Mac, and its other answers took up to
+	// 6 s during a call: without them an answer stays well inside Timeout.
+	Transcript: false,
 }

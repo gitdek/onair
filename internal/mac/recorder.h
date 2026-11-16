@@ -74,6 +74,16 @@ typedef struct {
     const char *link;  // what a click opens
 } onair_link;
 
+// A row of the live panel's answer cards: a card's question as heard, a
+// line of its answer, or a word on it, such as that the archive has no
+// answer.
+typedef struct {
+    const char *kind;  // "question", "line" or "note"
+    const char *text;
+    const char *where; // for a line: its meeting, date and moment
+    const char *link;  // for a line: what a click opens
+} onair_answer;
+
 // A connected display, as onairDisplays reports it.
 typedef struct {
     const char *id;       // stays the same across launches and reconnections
@@ -183,9 +193,10 @@ void onair_live_ask(void);
 // reports what goes wrong, and what the diagnostic log counts.
 void onair_live_listen(int on, double chunk);
 // LiveShow sets what the live panel shows, or hides it: a line under its
-// title, a status line, what a model said about the call, a line each, and
-// links. Any thread may call it.
-void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_link *links, int count);
+// title, a status line, what a model said about the call, a line each,
+// answer cards, a row each, and links. Any thread may call it.
+void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
+                     const onair_link *links, int count);
 // Quit ends the app.
 void onair_quit(void);
 

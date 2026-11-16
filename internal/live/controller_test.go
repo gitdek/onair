@@ -12,7 +12,7 @@ import (
 
 // fast is Defaults made quick enough to watch.
 var fast = Config{Window: time.Minute, Every: 20 * time.Millisecond, Least: 2, Chars: 4000, Most: 3, Quiet: time.Minute,
-	Timeout: 50 * time.Millisecond, Chunk: 15 * time.Second, Linger: time.Minute, Tick: 5 * time.Millisecond}
+	Timeout: 50 * time.Millisecond, Chunk: 15 * time.Second, Linger: time.Minute, Tick: 5 * time.Millisecond, Cards: 3, Again: time.Minute}
 
 // fakeScreen is the Mac, as the live side sees it.
 type fakeScreen struct {
@@ -61,11 +61,31 @@ func (s *fakeScreen) said() (asks int, listens []bool) {
 	return s.asks, append([]bool(nil), s.listens...)
 }
 
-// fakeArchive is On the Record, answering as answer says.
+// fakeArchive is On the Record, answering as answer says, and answering
+// a card's question as brief says, or else as answer does, with a line for
+// each meeting it finds.
 type fakeArchive struct {
 	mu     sync.Mutex
 	asked  []string
 	answer func(ctx context.Context, text string) (Found, error)
+	brief  func(ctx context.Context, question string) (Brief, error)
+	topics []string
+}
+
+func (a *fakeArchive) Answer(ctx context.Context, question string, transcript bool) (Brief, error) {
+	a.mu.Lock()
+	a.topics = append(a.topics, question)
+	brief, answer := a.brief, a.answer
+	a.mu.Unlock()
+	if brief != nil {
+		return brief(ctx, question)
+	}
+	found, err := answer(ctx, question)
+	var b Brief
+	for _, m := range found.Meetings {
+		b.Points = append(b.Points, Point{Text: m.Title, Meeting: m.Title, Date: m.Date, URL: m.URL})
+	}
+	return b, err
 }
 
 func (a *fakeArchive) Connections(ctx context.Context, text string) (Found, error) {

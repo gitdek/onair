@@ -42,6 +42,16 @@ type follow struct {
 	calls   []call    // what the judge said, newest first, one of each kind
 	verdict string    // what went wrong asking the judge, if anything
 
+	open        *utterance // the last utterance of a result, which the next may carry on
+	cards       []*card    // answer cards, newest first
+	cardsMade   int        // cards made so far, which number them
+	answering   int        // the card whose question waits for an answer, or 0
+	answerAsked time.Time  // when it was asked
+	lately      []lately   // questions asked lately, which aren't asked again
+	noticed     int        // questions noticed so far, for the diagnostic log
+	answers     int        // and asked
+	lines       int        // and lines of answers shown
+
 	allowed   Problem // SpeechAllowed, SpeechRefused or SpeechUnsupported, once the Mac has said
 	speech    string  // what is wrong with listening, if anything
 	transient bool    // and it goes once words are heard again
@@ -64,7 +74,7 @@ func (f *follow) enable(on bool) (ask bool) {
 	ask = on && !f.on
 	f.on = on
 	if !on {
-		f.heard, f.fresh, f.news, f.calls = nil, false, false, nil
+		f.heard, f.fresh, f.news, f.calls, f.open = nil, false, false, nil, nil
 	}
 	return ask
 }
@@ -95,6 +105,7 @@ func (f *follow) record(on bool, now time.Time) {
 		f.asking, f.asked, f.result, f.resultAt = 0, time.Time{}, "", time.Time{}
 		f.news, f.calls, f.inRound, f.judged, f.verdict = false, nil, 0, time.Time{}, ""
 		f.speech, f.transient, f.archive, f.answered, f.dropped = "", false, "", "", ""
+		f.open, f.cards, f.answering, f.lately = nil, nil, 0, nil
 	case !on && f.recording:
 		f.stopped = now
 	}
@@ -372,20 +383,27 @@ func (f *follow) merge(links []Link, now time.Time) int {
 
 // panel is what the panel shows now.
 func (f *follow) panel(now time.Time) Panel {
-	lingering := !f.recording && len(f.links) > 0 && !f.stopped.IsZero() && now.Sub(f.stopped) < f.cfg.Linger
+	lingering := !f.recording && (len(f.links) > 0 || len(f.cards) > 0) && !f.stopped.IsZero() && now.Sub(f.stopped) < f.cfg.Linger
 	p := Panel{Visible: f.on && (f.recording || lingering), Display: f.display, Links: append([]Link(nil), f.links...)}
 	if !p.Visible {
 		p.Links = nil
 		return p
 	}
 	p.Headline = f.headline(now)
+	for _, c := range f.cards {
+		a := Answer{Question: c.q.shown, Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
+		if !c.done {
+			a.Note = "Looking in On the Record…"
+		}
+		p.Answers = append(p.Answers, a)
+	}
 	for _, c := range f.calls {
 		if now.Sub(c.at) < f.cfg.Hold {
 			p.Calls = append(p.Calls, c.text)
 		}
 	}
 	if !f.recording {
-		p.Status = fmt.Sprintf("The recording stopped. These links go at %s.", f.stopped.Add(f.cfg.Linger).Format("15:04"))
+		p.Status = fmt.Sprintf("The recording stopped. The panel goes at %s.", f.stopped.Add(f.cfg.Linger).Format("15:04"))
 		return p
 	}
 	var lines []string
@@ -511,8 +529,12 @@ func (f *follow) shows(p Panel, now time.Time) string {
 		kinds = append(kinds, "listening")
 	}
 	person, others := f.recent(now)
-	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s; status: %s",
-		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), strings.Join(kinds, ", "))
+	lines := 0
+	for _, a := range p.Answers {
+		lines += len(a.Lines)
+	}
+	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s, %s with %s; status: %s",
+		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), plural(len(p.Answers), "answer card"), plural(lines, "line"), strings.Join(kinds, ", "))
 }
 
 // sentence ends what another part said with a full stop, if it has none.
@@ -525,4 +547,152 @@ func sentence(s string) string {
 		return s
 	}
 	return s + "."
+}
+
+// card is an answer card: a question noticed in the call, and what On the
+// Record answered about it.
+type card struct {
+	n     int
+	q     question
+	asked time.Time // when it was asked, or zero while it waits
+	done  bool      // its answer came, or it was given up on
+	lines []AnswerLine
+	note  string
+}
+
+// said takes the sentences of a result, while listening, and returns
+// those that ended. The last, when it runs to the end of its result's
+// sound, is held: the next result carries it on when it starts as that
+// result's sound does, within two Pauses of it, and else it ended too.
+func (f *follow) said(ss []utterance) []utterance {
+	if !f.listening() {
+		return nil
+	}
+	var ended []utterance
+	if held := f.open; held != nil {
+		f.open = nil
+		if len(ss) > 0 && ss[0].first && ss[0].from.Sub(held.to) <= 2*Pause+250*time.Millisecond && len(strings.Fields(held.text)) < 60 {
+			joined := *held
+			joined.text, joined.to, joined.ended = held.text+" "+ss[0].text, ss[0].to, ss[0].ended
+			ss = append([]utterance{joined}, ss[1:]...)
+		} else {
+			ended = append(ended, *held)
+		}
+	}
+	for i, s := range ss {
+		if i == len(ss)-1 && s.ended == open {
+			f.open = &s
+			break
+		}
+		ended = append(ended, s)
+	}
+	return ended
+}
+
+// flush ends a held sentence that no result carried on within a result's
+// length and five seconds.
+func (f *follow) flush(now time.Time) []utterance {
+	if !f.listening() {
+		f.open = nil
+	}
+	if f.open == nil || now.Sub(f.open.to) < f.cfg.Chunk+5*time.Second {
+		return nil
+	}
+	s := *f.open
+	f.open, s.ended = nil, byTime
+	return []utterance{s}
+}
+
+// ask takes a question noticed in the call. A card for it goes on top, to
+// be asked, and the panel keeps f.cfg.Cards, unless the same question was
+// asked within f.cfg.Again.
+func (f *follow) ask(q question, now time.Time) (n int, again bool) {
+	if f.cfg.Cards <= 0 {
+		return 0, false
+	}
+	f.noticed++
+	kept := f.lately[:0]
+	for _, l := range f.lately {
+		if now.Sub(l.at) < f.cfg.Again {
+			kept = append(kept, l)
+		}
+	}
+	f.lately = kept
+	for _, l := range f.lately {
+		if same(l.keys, q.keys) {
+			return 0, true
+		}
+	}
+	f.lately = append(f.lately, lately{keys: q.keys, at: now})
+	f.cardsMade++
+	f.cards = append([]*card{{n: f.cardsMade, q: q}}, f.cards...)
+	if len(f.cards) > f.cfg.Cards {
+		f.cards = f.cards[:f.cfg.Cards]
+	}
+	return f.cardsMade, false
+}
+
+// answerDue says which card's question to ask On the Record now: the
+// oldest not yet asked, while listening, and never while another waits for
+// its answer. A question it returns is under way: reply or abandonAnswer
+// ends it.
+func (f *follow) answerDue(now time.Time) (topic string, n int, ok bool) {
+	if !f.listening() || f.answering != 0 {
+		return "", 0, false
+	}
+	for i := len(f.cards) - 1; i >= 0; i-- {
+		if c := f.cards[i]; c.asked.IsZero() {
+			c.asked, f.answering, f.answerAsked = now, c.n, now
+			f.answers++
+			return c.q.topic, c.n, true
+		}
+	}
+	return "", 0, false
+}
+
+// reply takes On the Record's answer to a card's question: the lines that
+// answer it, or that the archive has none, or what went wrong. One that
+// nothing waits for any more is dropped.
+func (f *follow) reply(n int, b Brief, err error) (shown int, taken bool) {
+	if n == 0 || n != f.answering {
+		return 0, false
+	}
+	f.answering = 0
+	c := f.card(n)
+	if c == nil {
+		return 0, true
+	}
+	c.done = true
+	if err != nil {
+		c.note = sentence(brief(err))
+		return 0, true
+	}
+	c.lines = answerLines(c.q, b, 3)
+	if len(c.lines) == 0 {
+		c.note = "No answer in the archive."
+	}
+	f.lines += len(c.lines)
+	return len(c.lines), true
+}
+
+// abandonAnswer gives up on a card's question whose answer is late by a
+// second, so one that never returns doesn't stop the next.
+func (f *follow) abandonAnswer(now time.Time) (n int) {
+	if f.answering == 0 || now.Sub(f.answerAsked) <= f.cfg.Timeout+time.Second {
+		return 0
+	}
+	n, f.answering = f.answering, 0
+	if c := f.card(n); c != nil {
+		c.done, c.note = true, fmt.Sprintf("On the Record didn't answer within %s.", f.cfg.Timeout)
+	}
+	return n
+}
+
+func (f *follow) card(n int) *card {
+	for _, c := range f.cards {
+		if c.n == n {
+			return c
+		}
+	}
+	return nil
 }

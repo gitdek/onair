@@ -278,7 +278,7 @@ func TestThePanelStaysAWhileAfterTheRecordingWithItsLinks(t *testing.T) {
 	f.answer(asked(t, f, at(35)), strong("m1"), nil, at(35))
 	f.record(false, at(40))
 	p := f.panel(at(41))
-	if !p.Visible || titles(p.Links) != "Meeting m1" || p.Status != "The recording stopped. These links go at 15:02." {
+	if !p.Visible || titles(p.Links) != "Meeting m1" || p.Status != "The recording stopped. The panel goes at 15:02." {
 		t.Fatalf("after the recording the panel shows %+v", p)
 	}
 	if p := f.panel(at(40 + 120)); p.Visible {

@@ -144,6 +144,11 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 			for i := 0; i < 2000; i++ {
 				c.Heard(Heard{Speaker: Speaker(i % 4), Text: fmt.Sprintf("word %d and more words", i), From: time.Now(), To: time.Now()})
 			}
+			// Questions, each asked of the archive, which fails as it does.
+			for i := 0; i < 200; i++ {
+				c.Said(Said{Began: time.Now(), Step: 100 * time.Millisecond, Mic: []float64{0.5, 0.5, 0.5}, Call: []float64{0.1, 0.1, 0.1},
+					Segments: []Segment{{Text: fmt.Sprintf("how many mockups did Priya share in round %d?", i), At: 0, Length: 100 * time.Millisecond}}})
+			}
 			for _, p := range []Problem{SpeechRefused, SpeechUnsupported, SpeechFailed, SoundDropped, SpeechAllowed, 99} {
 				c.Report(p, strings.Repeat("why ", 1000))
 			}
@@ -210,6 +215,8 @@ func TestTheTapTellsTheLiveSideWhatTheRecorderDoes(t *testing.T) {
 	app.Menu(recorder.Start)
 	app.Event(recorder.Started, "")
 	waitFor(t, "listening", func() bool { _, l := screen.said(); return len(l) == 1 && l[0] })
+	// The panel is shown in the same step as listening starts, just after.
+	waitFor(t, "the panel", func() bool { return screen.last().Visible })
 	if p := screen.last(); !p.Visible || p.Display != "d2" || p.Status != "Listening…" {
 		t.Fatalf("while recording the panel shows %+v", p)
 	}

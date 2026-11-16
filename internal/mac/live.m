@@ -512,6 +512,9 @@ static void OAFail(OAListener *who, NSException *exception) {
     SFSpeechAudioBufferRecognitionRequest *request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
     request.requiresOnDeviceRecognition = YES;
     request.shouldReportPartialResults = NO;
+    // End marks, such as a question mark, help the live side tell where a
+    // sentence ends and whether it asks something.
+    request.addsPunctuation = YES;
     OARequest *r = [[OARequest alloc] init];
     r.number = ++_count[OA_BEGUN];
     r.request = request;
@@ -794,7 +797,17 @@ void onair_live_ask(void) {
 static atomic_long panelsAsked;
 static long panelsDone; // on the main thread
 
-void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_link *links, int count) {
+void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
+                     const onair_link *links, int count) {
+    NSMutableArray<NSDictionary<NSString *, NSString *> *> *rows = [NSMutableArray array];
+    for (int i = 0; i < answerCount; i++) {
+        [rows addObject:@{
+            @"kind" : [NSString stringWithUTF8String:answers[i].kind ?: ""] ?: @"",
+            @"text" : [NSString stringWithUTF8String:answers[i].text ?: ""] ?: @"",
+            @"where" : [NSString stringWithUTF8String:answers[i].where ?: ""] ?: @"",
+            @"link" : [NSString stringWithUTF8String:answers[i].link ?: ""] ?: @"",
+        }];
+    }
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *list = [NSMutableArray array];
     for (int i = 0; i < count; i++) {
         [list addObject:@{
@@ -813,7 +826,7 @@ void onair_live_show(int visible, const char *display, const char *headline, con
         if (asked <= panelsDone) return;
         panelsDone = asked;
         @try {
-            OAPanelShow(visible != 0, d, h, s, said, list);
+            OAPanelShow(visible != 0, d, h, s, said, rows, list);
         } @catch (NSException *exception) {
         }
     });

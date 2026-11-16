@@ -14,7 +14,7 @@ import (
 // What waits for the controller is bounded, so a controller that has
 // stopped, or fallen behind, never holds more than this.
 const (
-	waitingHeard   = 64 // finished pieces of text; the oldest go first
+	waitingHeard   = 64 // finished pieces of text, and sentences; the oldest go first
 	waitingReports = 16 // reports from the Mac; likewise
 	inFlight       = 2  // questions to On the Record not yet returned
 	panicsAllowed  = 3  // panics the controller recovers from before it stops
@@ -38,6 +38,7 @@ type Controller struct {
 	display   string
 	leftOut   bool
 	heard     []Heard
+	sentences []utterance
 	reports   []report
 	lost      int // inputs dropped because their queue was full
 
@@ -49,6 +50,16 @@ type Controller struct {
 	judges   map[string]Judge
 	verdicts chan verdict
 	judging  atomic.Int32 // rounds not yet returned
+
+	replies   chan reply
+	answering atomic.Int32 // questions of answer cards not yet returned
+}
+
+type reply struct {
+	card  int
+	brief Brief
+	err   error
+	took  time.Duration
 }
 
 type verdict struct {
@@ -75,7 +86,7 @@ type answer struct {
 // by name.
 func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge) *Controller {
 	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges,
-		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1)}
+		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1), replies: make(chan reply, inFlight+1)}
 	go c.run()
 	return c
 }
@@ -130,7 +141,16 @@ func (c *Controller) Said(s Said) {
 	for _, h := range turns {
 		c.Heard(h)
 	}
-	c.log("%s", s.counts(turns))
+	ss := s.sentences()
+	c.set(func() {
+		for _, one := range ss {
+			if len(c.sentences) >= waitingHeard {
+				c.sentences, c.lost = c.sentences[1:], c.lost+1
+			}
+			c.sentences = append(c.sentences, one)
+		}
+	})
+	c.log("%s; %s", s.counts(turns), endings(ss))
 }
 
 // Report takes what the Mac says about listening.
@@ -177,6 +197,7 @@ func (c *Controller) run() {
 	for {
 		var got *answer
 		var judged *verdict
+		var replied *reply
 		select {
 		case <-c.wake:
 		case <-t.C:
@@ -184,8 +205,10 @@ func (c *Controller) run() {
 			got = &a
 		case v := <-c.verdicts:
 			judged = &v
+		case r := <-c.replies:
+			replied = &r
 		}
-		err := c.step(f, got, judged, s)
+		err := c.step(f, got, judged, replied, s)
 		if err == nil {
 			continue
 		}
@@ -214,7 +237,7 @@ type sent struct {
 	shows     string // what the diagnostic log last said the panel shows
 }
 
-func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err error) {
+func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *reply, s *sent) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
@@ -223,8 +246,8 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err
 	now := c.now()
 	c.mu.Lock()
 	on, recording, display, leftOut, name := c.on, c.recording, c.display, c.leftOut, c.judge
-	heard, reports := c.heard, c.reports
-	c.heard, c.reports = nil, nil
+	heard, reports, sentences := c.heard, c.reports, c.sentences
+	c.heard, c.reports, c.sentences = nil, nil, nil
 	c.mu.Unlock()
 
 	if f.enable(on) {
@@ -248,6 +271,38 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err
 		}
 		all, mine := f.words()
 		c.log("heard %d pieces, %d words yours and %d others, listening %t; the window holds %d words, %d yours", len(heard), person, others, f.listening(), all, mine)
+	}
+	for _, said := range append(f.said(sentences), f.flush(now)...) {
+		q, ok := notice(said)
+		if !ok {
+			continue
+		}
+		who := map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who]
+		how := map[ending]string{byMark: "a mark", byPause: "a pause", open: "the end of the sound", byTime: "time"}[q.how]
+		if n, again := f.ask(q, now); again {
+			c.log("a question of %d words, %s, was asked within %s, so not again", len(strings.Fields(q.topic)), who, f.cfg.Again)
+		} else if n != 0 {
+			c.log("question %d noticed: %d words, %d key words, %s, its sentence ended by %s; so far %d noticed", n, len(strings.Fields(q.topic)), len(q.keys), who, how, f.noticed)
+		}
+	}
+	if replied != nil {
+		shown, taken := f.reply(replied.card, replied.brief, replied.err)
+		meetings := map[string]bool{}
+		for _, p := range replied.brief.Points {
+			meetings[p.Meeting+"\x00"+p.Date] = true
+		}
+		switch {
+		case !taken:
+			c.log("answer %d came back after %s, too late to be taken", replied.card, replied.took.Round(time.Millisecond))
+		case replied.err != nil:
+			c.log("answer %d failed after %s: %s", replied.card, replied.took.Round(time.Millisecond), brief(replied.err))
+		default:
+			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages; %d shown; so far %d asked and %d lines shown",
+				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages, shown, f.answers, f.lines)
+		}
+	}
+	if n := f.abandonAnswer(now); n != 0 {
+		c.log("answer %d given up on after %s", n, now.Sub(f.answerAsked).Round(time.Millisecond))
 	}
 	if got != nil {
 		taken := got.ask != 0 && got.ask == f.asking
@@ -307,6 +362,12 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, s *sent) (err
 			c.ask(text, ask)
 		}
 	}
+	if c.answering.Load() < inFlight {
+		if topic, n, ok := f.answerDue(now); ok {
+			c.log("answer %d asked, %d words", n, len(strings.Fields(topic)))
+			c.answer(topic, n)
+		}
+	}
 	if judge != nil && c.judging.Load() < inFlight {
 		if r, round, ok := f.roundDue(now); ok {
 			c.log("round %d sent, %d words", round, len(strings.Fields(r.Text)))
@@ -358,6 +419,35 @@ func (c *Controller) ask(text string, ask int) {
 		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
 		defer cancel()
 		a.found, a.err = c.archive.Connections(ctx, text)
+	}()
+}
+
+// answer asks On the Record about a card's question on a goroutine of its
+// own, for at most c.cfg.Timeout, and hands the reply back to run, as ask
+// does.
+func (c *Controller) answer(topic string, card int) {
+	c.answering.Add(1)
+	go func() {
+		r := reply{card: card}
+		began := c.now()
+		defer func() {
+			if p := recover(); p != nil {
+				r.brief, r.err = Brief{}, fmt.Errorf("asking On the Record failed: %v", p)
+			}
+			r.took = c.now().Sub(began)
+			c.answering.Add(-1)
+			select {
+			case c.replies <- r:
+			default:
+			}
+		}()
+		if c.archive == nil {
+			r.err = errors.New("On Air has no address for On the Record")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
+		defer cancel()
+		r.brief, r.err = c.archive.Answer(ctx, topic, c.cfg.Transcript)
 	}()
 }
 

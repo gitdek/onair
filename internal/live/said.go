@@ -156,3 +156,100 @@ func level(series []float64) string {
 	}
 	return fmt.Sprintf("%.0f dBFS", 10*math.Log10(power))
 }
+
+// Pause is how long a silence between two words ends a sentence, for when
+// recognition marks no end of one.
+const Pause = 700 * time.Millisecond
+
+// utterance is a run of a result's words with no end mark and no Pause in
+// it: whose it was, and when it was said.
+type utterance struct {
+	who      Speaker
+	text     string
+	from, to time.Time
+	ended    ending
+	// first says it starts as its result's sound does, so it may carry on
+	// the last sentence of the result before.
+	first bool
+}
+
+// ending is how a sentence ended.
+type ending int
+
+const (
+	// open is a sentence that runs to the end of its result's sound, which
+	// the next result may carry on.
+	open ending = iota
+	byMark
+	byPause
+	// byTime is one held open that nothing carried on.
+	byTime
+)
+
+// sentences is a result in sentences: its words split where recognition
+// marks the end of one, with a full stop, a question mark or an
+// exclamation mark, and where a Pause falls between two of them. A
+// sentence is whose its sound was, by loudness, as a turn is. When none
+// of the result's words has a time, it splits at end marks only.
+func (s Said) sentences() []utterance {
+	timed := false
+	for _, seg := range s.Segments {
+		timed = timed || seg.At > 0 || seg.Length > 0
+	}
+	var out []utterance
+	var cur *utterance
+	var from, end time.Duration
+	finish := func(how ending) {
+		if cur == nil {
+			return
+		}
+		cur.ended, cur.who = how, s.whose(from, end)
+		if !timed {
+			cur.who = s.whose(0, s.measured())
+		}
+		out = append(out, *cur)
+		cur = nil
+	}
+	for _, seg := range s.Segments {
+		text := strings.Join(strings.Fields(seg.Text), " ")
+		if text == "" {
+			continue
+		}
+		at, length := seg.At, max(seg.Length, 0)
+		if !timed {
+			at, length = 0, s.measured()
+		}
+		if cur != nil && timed && at-end >= Pause {
+			finish(byPause)
+		}
+		switch {
+		case cur == nil:
+			cur, from = &utterance{text: text, from: s.Began.Add(at), first: len(out) == 0 && (!timed || at < Pause)}, at
+		case strings.Trim(text, ".?!,;:…") == "":
+			// A mark on its own goes with the word before it.
+			cur.text += text
+		default:
+			cur.text += " " + text
+		}
+		end = max(end, at+length)
+		cur.to = s.Began.Add(end)
+		if strings.HasSuffix(text, ".") || strings.HasSuffix(text, "?") || strings.HasSuffix(text, "!") {
+			finish(byMark)
+		}
+	}
+	if cur != nil && timed && s.measured()-end >= Pause {
+		finish(byPause)
+	}
+	finish(open)
+	return out
+}
+
+// endings counts a result's sentences for the diagnostic log, by how each
+// ended.
+func endings(ss []utterance) string {
+	var n [byTime + 1]int
+	for _, s := range ss {
+		n[s.ended]++
+	}
+	return fmt.Sprintf("%d sentences, %d ended by a mark, %d by a pause, %d open at the end", len(ss), n[byMark], n[byPause], n[open])
+}
