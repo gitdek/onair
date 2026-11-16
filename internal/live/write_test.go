@@ -143,14 +143,18 @@ func TestAWrittenAnswerShowsOnlyWhenItChecksOut(t *testing.T) {
 		t.Fatalf("the card shows %+v", a)
 	}
 	for text, note := range map[string]string{
-		"Not in the archive.":                                                        "Not in the archive.",
+		"Not in the archive.":                                                        "No direct answer; the closest notes:",
 		"They hope to close a $750k pre-seed round [12].":                            "The local model's answer didn't check out, so it isn't shown.",
 		"They hope to close a $750k pre-seed round.":                                 "The local model's answer didn't check out, so it isn't shown.",
 		"They hope to close a $750k pre-seed round [1]. Not in the archive, though.": "The local model's answer didn't check out, so it isn't shown.",
 	} {
 		f, n, _ := writingCard(t, "how much were they looking to collect for Halcyon")
 		f.answerWritten(n, text, nil)
-		if a := f.panel(at(2)).Answers[0]; a.Note != note || a.Text != "" || len(a.Lines) != 0 || len(a.Sources) != 0 {
+		// A model that finds no direct answer shows the closest notes, since
+		// it can be too strict when they use other words; one whose answer
+		// doesn't check out shows nothing.
+		closest := text == "Not in the archive."
+		if a := f.panel(at(2)).Answers[0]; a.Note != note || a.Text != "" || (len(a.Lines) > 0) != closest || len(a.Sources) != 0 {
 			t.Fatalf("for %q the card shows %+v", text, a)
 		}
 	}

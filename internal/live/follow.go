@@ -1014,6 +1014,7 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 	f.wrote, f.slow = "", false
 	f.written++
 	shown, cited, o, why := readAnswer(text, len(c.from))
+	closest := c.lines
 	c.done, c.lines = true, nil
 	switch o {
 	case answered:
@@ -1025,6 +1026,15 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 		}
 	case notInArchive:
 		f.notIn++
+		// The model can be too strict when the notes use other words. If the
+		// cheap ranking found lines about the question, show them rather
+		// than nothing, and say the model found no direct answer.
+		if len(closest) > 0 {
+			c.lines = closest
+			f.lines += len(closest)
+			c.note = "No direct answer; the closest notes:"
+			break
+		}
 		c.note = "Not in the archive."
 	default:
 		f.rejectedN++

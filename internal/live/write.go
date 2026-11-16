@@ -24,7 +24,8 @@ const (
 	answerSystem = "You answer a question asked in a meeting from notes of earlier meetings. Use only the numbered notes you are given. " +
 		"Write one or two short sentences, 40 words at most, that answer the question, naming the items of a list briefly, and after each fact put the number of the note it comes from in square brackets, like [3]. " +
 		"Notes may use other words for what is asked, such as capabilities or plans for features. " +
-		"Don't add anything the notes don't say. If the notes don't answer the question, write exactly: Not in the archive"
+		"A question about what someone wanted, planned or would like is answered by notes about their goals, plans, roadmap or future work, even when worded differently. " +
+		"Don't add anything the notes don't say. Only if no note is about what the question asks, write exactly: Not in the archive"
 	rewordSystem = "You help search the notes of earlier meetings for what a question asked in a meeting is about. " +
 		"Reply with one line: other words the notes may use for the things it asks about, separated by commas, at most 8, and nothing else. " +
 		"For a question about features, say: capabilities, roadmap, plans, improvements, new version. " +
