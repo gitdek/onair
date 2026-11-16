@@ -132,6 +132,7 @@ enum {
     OA_CALLED_OFF,  // requests On Air called off because their final didn't come
     OA_CALLS,       // calls of a request's result handler
     OA_PARTIALS,    // results that weren't final
+    OA_UPDATES,     // partial results, and how far the sound has gone since, handed to Go
     OA_FINALS,      // final results
     OA_EMPTY_FINALS, // final results with no words
     OA_WORDS,       // words in final results
@@ -148,8 +149,13 @@ enum {
 };
 
 // How long a request's final words are waited for after its sound ended,
-// and then for it to go once it is called off, in seconds.
-static const double kFinalWait = 5, kGoneWait = 1;
+// and then for it to go once it is called off, in seconds; and how often
+// the listener looks at the clock.
+static const double kFinalWait = 5, kGoneWait = 1, kTick = 0.25;
+
+// Steps of sound a request is given after a partial result before Go is
+// told how far its sound has gone, so that it can tell a pause.
+static const long kUpdateSteps = 2;
 
 // Buffers of each sound that capture offered while listening, and those of
 // them that couldn't be copied, counted on capture's queue.
@@ -240,6 +246,10 @@ static BOOL OACanAsk(void) {
 // it is ending, on the clock. It is used on the live queue only.
 @interface OARequest : NSObject
 @property long number, start, steps;
+@property long handed;                     // steps it had been given when Go was last told of it
+@property long partials, updates;          // its partial results, and those and updates handed to Go
+@property(copy) NSString *text;            // its newest partial result's words
+@property(copy) NSArray<SFTranscriptionSegment *> *segments; // and their segments
 @property(strong) SFSpeechAudioBufferRecognitionRequest *request;
 @property(strong) SFSpeechRecognitionTask *task;
 @property double begun, ended, calledOff; // 0 until then
@@ -336,7 +346,7 @@ static void OAFail(OAListener *who, NSException *exception) {
         return;
     }
     SFSpeechRecognizerAuthorizationStatus status = [SFSpeechRecognizer authorizationStatus];
-    OADiag(@"listening starts: speech recognition %s, both sounds as one, a request every %.0f s of sound", OAAuthName(status), _chunk);
+    OADiag(@"listening starts: speech recognition %s, both sounds as one, a request every %.0f s of sound, its partial results handed on as they come", OAAuthName(status), _chunk);
     if (status == SFSpeechRecognizerAuthorizationStatusNotDetermined) {
         [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus answer) {
             dispatch_async(OALiveQueue(), ^{
@@ -511,7 +521,11 @@ static void OAFail(OAListener *who, NSException *exception) {
 - (void)begin {
     SFSpeechAudioBufferRecognitionRequest *request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
     request.requiresOnDeviceRecognition = YES;
-    request.shouldReportPartialResults = NO;
+    // Partial results come a few tenths of a second after their sound, and
+    // Go takes each sentence of them once it is finished, so a question
+    // is asked about a second after it is said rather than when its
+    // request ends.
+    request.shouldReportPartialResults = YES;
     // End marks, such as a question mark, help the live side tell where a
     // sentence ends and whether it asks something.
     request.addsPunctuation = YES;
@@ -526,12 +540,13 @@ static void OAFail(OAListener *who, NSException *exception) {
     r.task = [_recognizer recognitionTaskWithRequest:request resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
         // What the live queue needs is taken here, on recognition's queue.
         BOOL got = result != nil, final = result.isFinal;
-        NSArray<SFTranscriptionSegment *> *segments = final ? [result.bestTranscription.segments copy] : nil;
-        long words = OAWords(result.bestTranscription.formattedString);
+        NSArray<SFTranscriptionSegment *> *segments = got ? [result.bestTranscription.segments copy] : nil;
+        NSString *text = got ? [result.bestTranscription.formattedString copy] : nil;
+        long words = OAWords(text);
         double at = OANow();
         dispatch_async(OALiveQueue(), ^{
             @try {
-                [self request:r result:got final:final words:words segments:segments error:error at:at];
+                [self request:r result:got final:final words:words text:text segments:segments error:error at:at];
             } @catch (NSException *exception) {
                 OAFail(self, exception);
             }
@@ -552,9 +567,27 @@ static void OAFail(OAListener *who, NSException *exception) {
 // queue: final words go to Go, and the first final or error ends the
 // request, whereupon the next may begin. It runs after listening stops as
 // well, so the log shows how requests end when they are called off.
-- (void)request:(OARequest *)r result:(BOOL)got final:(BOOL)final words:(long)words segments:(NSArray<SFTranscriptionSegment *> *)segments error:(NSError *)error at:(double)at {
+- (void)request:(OARequest *)r
+         result:(BOOL)got
+          final:(BOOL)final
+          words:(long)words
+           text:(NSString *)text
+       segments:(NSArray<SFTranscriptionSegment *> *)segments
+          error:(NSError *)error
+             at:(double)at {
     _count[OA_CALLS]++;
-    if (got && !final) _count[OA_PARTIALS]++;
+    if (got && !final) {
+        _count[OA_PARTIALS]++;
+        r.partials++;
+        // A partial result goes to Go when its words changed, or the sound
+        // went on; Go decides when a sentence of it is finished.
+        BOOL changed = ![text ?: @"" isEqualToString:r.text ?: @""];
+        if (r == _current && !r.final && !r.done && !_stopped && (changed || r.steps >= r.handed + kUpdateSteps)) {
+            r.text = text;
+            r.segments = segments;
+            [self hand:r segments:segments partial:YES];
+        }
+    }
     NSString *when = [NSString stringWithFormat:@"%.0f ms after it began, %@%@", (at - r.begun) * 1000,
                                                 r.ended > 0 ? [NSString stringWithFormat:@"%.0f ms after its sound ended", (at - r.ended) * 1000] : @"before its sound ended",
                                                 _stopped ? @", after listening stopped" : @""];
@@ -562,15 +595,15 @@ static void OAFail(OAListener *who, NSException *exception) {
         _count[OA_FINALS]++;
         _count[OA_WORDS] += words;
         if (!words) _count[OA_EMPTY_FINALS]++;
-        BOOL handed = !r.final && !_stopped && [self hand:r segments:segments];
+        BOOL handed = !r.final && !_stopped && [self hand:r segments:segments partial:NO];
         if (handed) _count[OA_HANDED]++;
         r.final = YES;
         long untimed = 0;
         for (SFTranscriptionSegment *segment in segments) {
             if (segment.duration <= 0) untimed++;
         }
-        OADiag(@"request %ld: final, %ld words in %lu segments (%ld with no length) over %ld steps, %@ to Go, %@", r.number, words, (unsigned long)segments.count, untimed, r.steps,
-               handed ? @"handed" : @"not handed", when);
+        OADiag(@"request %ld: final, %ld words in %lu segments (%ld with no length) over %ld steps, %@ to Go, after %ld partial results and %ld handed to Go with updates, %@", r.number, words,
+               (unsigned long)segments.count, untimed, r.steps, handed ? @"handed" : @"not handed", r.partials, r.updates, when);
     }
     if (error) {
         _count[OA_ERRORS]++;
@@ -597,13 +630,17 @@ static void OAFail(OAListener *who, NSException *exception) {
     [self resume];
 }
 
-// Hand gives Go a request's final words: each segment's words and when it
-// was said, from the start of the request's sound, when that sound began on
-// the clock, and each sound's loudness through it, a step at a time.
-- (BOOL)hand:(OARequest *)r segments:(NSArray<SFTranscriptionSegment *> *)segments {
+// Hand gives Go a request's words, final or partial: each segment's words
+// and when it was said, from the start of the request's sound, when that
+// sound began on the clock, and each sound's loudness through all the
+// sound the request has been given, a step at a time. A partial result,
+// or an update of how far the sound has gone, may have no words; a final
+// one with none goes only when partial ones went.
+- (BOOL)hand:(OARequest *)r segments:(NSArray<SFTranscriptionSegment *> *)segments partial:(BOOL)partial {
     long n = (long)segments.count, steps = r.steps;
-    if (!n) return NO;
+    if (!n && !partial && !r.updates) return NO;
     onair_segment *list = calloc((size_t)n, sizeof *list);
+    if (!list && !n) list = calloc(1, sizeof *list);
     double *mic = calloc((size_t)MAX(steps, 1), sizeof(double)), *call = calloc((size_t)MAX(steps, 1), sizeof(double));
     BOOL handed = list && mic && call;
     if (handed) {
@@ -618,7 +655,12 @@ static void OAFail(OAListener *who, NSException *exception) {
             mic[i] = _loud[slot][1];
         }
         double step = (double)_mix.step / _mix.rate;
-        onairHeard(_originWall + r.start * step, list, (int)n, step, mic, call, (int)steps);
+        onairHeard(_originWall + r.start * step, list, (int)n, step, mic, call, (int)steps, partial ? 1 : 0, r.number);
+        r.handed = steps;
+        if (partial) {
+            r.updates++;
+            _count[OA_UPDATES]++;
+        }
     }
     free(list);
     free(mic);
@@ -642,18 +684,19 @@ static void OAFail(OAListener *who, NSException *exception) {
     }
     long *c = _count;
     OADiag(@"mix: %ld steps (peak %@), %ld frames late and %ld early, %ld steps held now, %ld at most, %ld dropped; requests begun %ld, ended %ld, ended early %ld, "
-           @"called off %ld; handler calls %ld, not final %ld, finals %ld (%ld empty, %ld handed to Go), words %ld, errors %ld (%ld shown)",
+           @"called off %ld; handler calls %ld, not final %ld (%ld handed to Go with updates), finals %ld (%ld empty, %ld handed to Go), words %ld, errors %ld (%ld shown)",
            c[OA_STEPS], OADecibels(_peak), _mix.late, _mix.early, (long)_held.count, _heldMost, c[OA_DROPPED], c[OA_BEGUN], c[OA_ENDED], c[OA_EARLY], c[OA_CALLED_OFF],
-           c[OA_CALLS], c[OA_PARTIALS], c[OA_FINALS], c[OA_EMPTY_FINALS], c[OA_HANDED], c[OA_WORDS], c[OA_ERRORS], c[OA_SHOWN]);
+           c[OA_CALLS], c[OA_PARTIALS], c[OA_UPDATES], c[OA_FINALS], c[OA_EMPTY_FINALS], c[OA_HANDED], c[OA_WORDS], c[OA_ERRORS], c[OA_SHOWN]);
     _peak = -1;
 }
 
-// Tick, every second, calls off a request whose final hasn't come, keeps
-// the mix moving with the clock when no sound comes, so a request ends even
-// then, and says when sound was dropped.
+// Tick, every quarter of a second, calls off a request whose final hasn't
+// come, keeps the mix moving with the clock when no sound comes, so a
+// request ends even then, tells Go how far the open request's sound has
+// gone since its last partial result, and says when sound was dropped.
 - (void)tick {
     if (_stopped) return;
-    if (++_ticks % 5 == 0) [self report];
+    if (++_ticks % lround(5 / kTick) == 0) [self report];
     if (!_ready) return;
     double now = OANow();
     if (_current.ended > 0 && _current.calledOff <= 0 && now - _current.ended >= kFinalWait) {
@@ -672,6 +715,8 @@ static void OAFail(OAListener *who, NSException *exception) {
     } else {
         [self resume];
     }
+    OARequest *r = _current;
+    if (r && !r.final && r.ended <= 0 && r.steps >= r.handed + kUpdateSteps) [self hand:r segments:r.segments partial:YES];
     long lost = atomic_load(&dropped);
     if (lost > _droppedSaid) {
         _droppedSaid = lost;
@@ -757,7 +802,7 @@ void onair_live_listen(int on, double chunk) {
             listener = [[OAListener alloc] initWithChunk:chunk];
             [listener start];
             ticker = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, OALiveQueue());
-            dispatch_source_set_timer(ticker, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_SEC / 10);
+            dispatch_source_set_timer(ticker, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTick * NSEC_PER_SEC)), (uint64_t)(kTick * NSEC_PER_SEC), NSEC_PER_SEC / 40);
             dispatch_source_set_event_handler(ticker, ^{
                 @try {
                     [listener tick];

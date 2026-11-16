@@ -81,7 +81,11 @@ func writingCard(t *testing.T, said string) (*follow, int, Prompt) {
 		t.Fatalf("%q isn't noticed", said)
 	}
 	f.ask(q, t0)
-	_, n, _ := f.answerDue(t0)
+	// Without the writer free to reword it, the question goes as heard.
+	if _, _, ok := f.answerDue(t0); ok {
+		t.Fatal("the question went before the writer could reword it")
+	}
+	_, n, _ := f.answerDue(t0.Add(RewordWait))
 	if shown, taken, write := f.reply(n, madeUp(), nil, at(1)); !taken || !write || shown != 0 {
 		t.Fatalf("a brief for the writer: shown %d, taken %t, write %t", shown, taken, write)
 	}
@@ -358,7 +362,10 @@ func TestTheWriterTheJudgeAndTheArchiveTakeTurns(t *testing.T) {
 	_, round := roundAt(t, f, at(1))
 	q, _ := notice(utterance{text: "how much were they looking to collect for Halcyon"})
 	f.ask(q, at(1))
-	_, n, _ := f.answerDue(at(1))
+	if _, _, ok := f.rewordDue(at(1)); ok {
+		t.Fatal("a question is reworded while a round is out")
+	}
+	_, n, _ := f.answerDue(at(2))
 	f.reply(n, madeUp(), nil, at(2))
 	f.state(utterance{text: "so Halcyon is closing a $2 million seed round next month.", to: at(2)})
 	if _, _, ok := f.writeDue(at(2)); ok {
@@ -415,6 +422,9 @@ func TestTheControllerWritesAnswersAndChecksWhatIsSaid(t *testing.T) {
 		brief:  func(context.Context, string) (Brief, error) { return madeUp(), nil },
 	}
 	writer := &fakeWriter{write: func(ctx context.Context, p Prompt) (string, error) {
+		if p.System == rewordSystem {
+			return "funding, round, investors", nil
+		}
 		if p.System == answerSystem {
 			return fmt.Sprintf("They hope to close a $750k pre-seed round [%d].", numberOf(p, "$750k")), nil
 		}
@@ -469,7 +479,14 @@ func TestTheControllerWritesAnswersAndChecksWhatIsSaid(t *testing.T) {
 			t.Fatalf("the log holds what was said, asked or written:\n%s", lines)
 		}
 	}
-	for _, want := range []string{"write 1 asked: 10 passages, about", "write 1 came back in", "answered, citing 1 source; so far 1 written, 1 answered, 0 not in the archive, 0 rejected",
+	archive.mu.Lock()
+	topics := strings.Join(archive.topics, " | ")
+	archive.mu.Unlock()
+	if topics != "how much were they looking to collect for Halcyon? funding round investors" {
+		t.Fatalf("On the Record was asked %q", topics)
+	}
+	for _, want := range []string{"reword 1 asked: about", "reword 1 came back in", "3 words added", "answer 1 asked, 12 words, 3 of them the local model's, for a card shown", "write 1 asked: 10 passages, about",
+		"card 1 shown ", "reworded in ", "written in ", "write 1 came back in", "answered, citing 1 source; so far 1 written, 1 answered, 0 not in the archive, 0 rejected",
 		"check 1 asked: 1 statements, ", "check 1 came back in", "differs, shown; so far 1 checked, 1 differ, 0 rejected", "1 written; status"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("the log doesn't say %q:\n%s", want, lines)

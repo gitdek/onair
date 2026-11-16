@@ -58,8 +58,8 @@ enum {
     ONAIR_LIVE_DIAG = 6,        // a line for the diagnostic log, of counts, kinds and codes only
 };
 
-// A word or so of a final result of speech recognition, as onairHeard
-// reports it.
+// A word or so of a result of speech recognition, as onairHeard reports
+// it.
 typedef struct {
     const char *text;
     double at, length; // when it was said, in seconds from the start of its request's sound
@@ -188,8 +188,10 @@ void onair_reveal(const char *path);
 void onair_live_ask(void);
 // LiveListen starts or stops recognizing speech in capture's two sounds,
 // added into one, on the Mac only, and returns at once. While on,
-// onairHeard reports the finished words of about every chunk seconds of
-// sound, with how loud each of the two sounds was meanwhile, and onairLive
+// onairHeard reports the words of a request every chunk seconds of sound,
+// partial ones as they come and how far its sound has gone four times a
+// second, then its final ones, with how loud each of the two sounds was
+// meanwhile, and onairLive
 // reports what goes wrong, and what the diagnostic log counts.
 void onair_live_listen(int on, double chunk);
 // LiveShow sets what the live panel shows, or hides it: a line under its

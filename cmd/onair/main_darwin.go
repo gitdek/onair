@@ -200,10 +200,10 @@ func (b bridge) Menu(action int) {
 	}
 }
 
-// Heard hands a final result of speech recognition to the live side,
-// which decides whose each word was.
+// Heard hands a result of speech recognition to the live side, which
+// decides whose each word was, and when a sentence of it is finished.
 func (b bridge) Heard(s mac.Said) {
-	said := live.Said{Began: seconds(s.Began), Step: duration(s.Step), Mic: s.Mic, Call: s.Call}
+	said := live.Said{Began: seconds(s.Began), Step: duration(s.Step), Mic: s.Mic, Call: s.Call, Partial: s.Partial, Request: s.Request}
 	for _, seg := range s.Segments {
 		said.Segments = append(said.Segments, live.Segment{Text: seg.Text, At: duration(seg.At), Length: duration(seg.Length)})
 	}

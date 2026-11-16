@@ -20,7 +20,11 @@ type question struct {
 	// newest meeting's lines come first.
 	recall bool
 	who    Speaker
-	how    ending // how the sentence it was heard in ended
+	how    ending    // how the sentence it was heard in ended
+	said   time.Time // when its last word was said
+	// extra are the writer's other words for what it asks about, which
+	// the lines the writer answers from are ranked by too.
+	extra []key
 }
 
 // key is a key word of a question: its stem, and what it counts for, two
@@ -28,6 +32,7 @@ type question struct {
 type key struct {
 	stem   string
 	weight float64
+	word   string // as written, for the writer's words
 }
 
 // want is the kind of answer a question wants, which a line that has it
@@ -66,7 +71,7 @@ func notice(s utterance) (question, bool) {
 	for i, w := range words {
 		plain[i] = bare(w)
 	}
-	q := question{who: s.who, how: s.ended, recall: holds(plain, recalls)}
+	q := question{who: s.who, how: s.ended, said: s.to, recall: holds(plain, recalls)}
 	asks := strings.HasSuffix(s.text, "?") || questionWords[plain[0]] ||
 		len(plain) > 1 && auxiliaries[plain[0]] && (subjects[plain[1]] || named(words[1]))
 	shown, topic, least, from := words, words, 2.0, 0
@@ -138,7 +143,7 @@ var kin = func() map[string]string {
 		"date":    "date dates deadline due schedule scheduled timeline",
 		"screen":  "screen screens page pages view mockup mockups",
 		"demo":    "demo demoed presentation walkthrough prototype",
-		"feature": "feature features functionality capability capabilities",
+		"feature": "feature features functionality capability capabilities improvement improvements enhancement enhancements roadmap",
 		"client":  "customer customers client clients user users",
 	}
 	out := map[string]string{}
@@ -273,6 +278,30 @@ func (q question) relevance(p Point) float64 {
 		return mine + near + 1.5
 	}
 	return mine + near
+}
+
+// rank is how well a line of a brief seems to answer a question, for
+// choosing the lines the writer reads: each key word, or word the writer
+// gave for the same thing, that the line has counts whole, and each that
+// only what it sits under has counts half, so that the lines under a
+// heading that matches rank above those that share nothing; having the
+// kind of answer the question wants counts one and a half.
+func (q question) rank(p Point) float64 {
+	own, under := stems(p.Text), stems(p.Under+" "+p.Meeting)
+	gave := q.want != anything && gives(q.want, p.Text)
+	r := 0.0
+	for _, k := range append(append([]key(nil), q.keys...), q.extra...) {
+		switch {
+		case like(own, k.stem) || gave && answers(q.want, k.stem):
+			r += k.weight
+		case like(under, k.stem):
+			r += k.weight / 2
+		}
+	}
+	if gave {
+		r += 1.5
+	}
+	return r
 }
 
 // Enough is the relevance a line needs to be shown as an answer: two key

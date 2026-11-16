@@ -154,9 +154,9 @@ func (m *Model) Judge(ctx context.Context, r live.Round) (live.Verdict, error) {
 
 // Write asks the helper to write for a prompt, and returns what it wrote.
 // While the model loads, it waits for it as long as ctx allows, and then
-// returns ErrLoading.
+// returns ErrLoading, or at once for a prompt marked Quick.
 func (w *Writer) Write(ctx context.Context, p live.Prompt) (string, error) {
-	line, err := w.ask(ctx, map[string]any{"system": p.System, "user": p.User, "most": p.Most}, true)
+	line, err := w.ask(ctx, map[string]any{"system": p.System, "user": p.User, "most": p.Most}, !p.Quick)
 	if err != nil {
 		return "", err
 	}

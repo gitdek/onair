@@ -87,34 +87,6 @@ func TestAResultSplitsIntoSentencesAtMarksAndPauses(t *testing.T) {
 	}
 }
 
-func TestASentenceCutBetweenTwoResultsIsJoined(t *testing.T) {
-	f := listening(Defaults)
-	t0 := time.Date(2026, 11, 15, 15, 0, 0, 0, time.UTC)
-	first := []utterance{{text: "we said nine", ended: byMark}, {text: "how many mockups did", from: t0.Add(13 * time.Second), to: t0.Add(14800 * time.Millisecond), ended: open}}
-	if got := f.said(first); len(got) != 1 || got[0].text != "we said nine" {
-		t.Fatalf("the first result ended %+v", got)
-	}
-	next := []utterance{{text: "Priya share in the walkthrough", from: t0.Add(15200 * time.Millisecond), to: t0.Add(17 * time.Second), first: true, ended: byPause}}
-	got := f.said(next)
-	if len(got) != 1 || got[0].text != "how many mockups did Priya share in the walkthrough" || got[0].ended != byPause || !got[0].from.Equal(t0.Add(13*time.Second)) {
-		t.Fatalf("joined %+v", got)
-	}
-	// One that the next result doesn't carry on ends by itself.
-	f.said([]utterance{{text: "and the price", to: t0.Add(30 * time.Second), ended: open}})
-	if got := f.said([]utterance{{text: "Later", from: t0.Add(40 * time.Second), first: true, ended: byPause}}); len(got) != 2 || got[0].text != "and the price" {
-		t.Fatalf("not carried on %+v", got)
-	}
-	// One held that nothing carries on ends after a result's length and
-	// five seconds.
-	f.said([]utterance{{text: "is the launch on", to: t0.Add(60 * time.Second), ended: open}})
-	if got := f.flush(t0.Add(70 * time.Second)); got != nil {
-		t.Fatalf("flushed early %+v", got)
-	}
-	if got := f.flush(t0.Add(81 * time.Second)); len(got) != 1 || got[0].ended != byTime {
-		t.Fatalf("flushed %+v", got)
-	}
-}
-
 // madeUp is a made-up answer, shaped as On the Record's briefs are: lines
 // of four meetings' notes and one passage of a transcript.
 func madeUp() Brief {
@@ -208,16 +180,16 @@ func TestTheSameQuestionIsntAskedAgainWithinMinutes(t *testing.T) {
 		}
 		return q
 	}
-	if n, again := f.ask(q("how many mockups did Priya share"), t0); n != 1 || again {
+	if n, again, _ := f.ask(q("how many mockups did Priya share"), t0); n != 1 || again {
 		t.Fatalf("the first question: card %d, again %t", n, again)
 	}
-	if _, again := f.ask(q("so how many mockups did Priya share in the walkthrough"), t0.Add(time.Minute)); !again {
+	if _, again, _ := f.ask(q("so how many mockups did Priya share in the walkthrough"), t0.Add(time.Minute)); !again {
 		t.Fatal("the same question was asked again a minute later")
 	}
-	if n, again := f.ask(q("how much cash does Halcyon need"), t0.Add(time.Minute)); n != 2 || again {
+	if n, again, _ := f.ask(q("how much cash does Halcyon need"), t0.Add(time.Minute)); n != 2 || again {
 		t.Fatalf("another question: card %d, again %t", n, again)
 	}
-	if n, again := f.ask(q("how many mockups did Priya share"), t0.Add(4*time.Minute)); n != 3 || again {
+	if n, again, _ := f.ask(q("how many mockups did Priya share"), t0.Add(4*time.Minute)); n != 3 || again {
 		t.Fatalf("the same question four minutes later: card %d, again %t", n, again)
 	}
 	f.ask(q("which capabilities did Priya list for the build"), t0.Add(5*time.Minute))
@@ -225,7 +197,7 @@ func TestTheSameQuestionIsntAskedAgainWithinMinutes(t *testing.T) {
 	if len(p.Answers) != 3 || p.Answers[0].Question != "Which capabilities did Priya list for the build?" || p.Answers[2].Question != "How much cash does Halcyon need?" {
 		t.Fatalf("cards %+v", p.Answers)
 	}
-	if p.Answers[0].Note != "Looking in On the Record…" {
+	if p.Answers[0].Note != "Looking…" {
 		t.Fatalf("a card not yet answered says %q", p.Answers[0].Note)
 	}
 }
@@ -320,7 +292,7 @@ func TestTheControllerAnswersAQuestionHeardInTheCall(t *testing.T) {
 			t.Fatalf("the log holds what was said or answered:\n%s", lines)
 		}
 	}
-	for _, want := range []string{"1 ended by a mark", "question 1 noticed: 6 words, 3 key words, someone else's, its sentence ended by a mark", "answer 1 asked, 6 words",
+	for _, want := range []string{"1 by a mark", "question 1 noticed: 6 words, 3 key words, someone else's, its sentence ended by a mark", "answer 1 asked, 6 words",
 		"answer 1 came back in", "11 lines from 5 meetings, 9 passages; 2 shown", "answer 2 came back in", "0 shown; so far 2 asked and 2 lines shown", "2 answer cards with 2 lines"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("the log doesn't say %q:\n%s", want, lines)

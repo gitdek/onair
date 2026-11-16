@@ -38,7 +38,7 @@ type Controller struct {
 	display   string
 	leftOut   bool
 	heard     []Heard
-	sentences []utterance
+	results   []Said // of speech recognition, a partial one replacing the one before of its request
 	reports   []report
 	lost      int // inputs dropped because their queue was full
 
@@ -56,15 +56,20 @@ type Controller struct {
 
 	writers  map[string]Writer
 	writings chan writing
-	writes   atomic.Int32 // answers and checks the writer hasn't returned
+	writes   atomic.Int32 // answers, checks and rewordings the writer hasn't returned
+
+	// cancels give up on the questions to On the Record still out, by
+	// card, for one asked early that is no longer wanted. Only run uses
+	// it.
+	cancels map[int]context.CancelFunc
 }
 
 // writing is what the writer wrote: an answer for a card, or a check.
 type writing struct {
-	card, check int
-	text        string
-	err         error
-	took        time.Duration
+	card, check, reword int
+	text                string
+	err                 error
+	took                time.Duration
 }
 
 type reply struct {
@@ -100,7 +105,7 @@ type answer struct {
 func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge, writers map[string]Writer) *Controller {
 	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges, writers: writers,
 		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1), replies: make(chan reply, inFlight+1),
-		writings: make(chan writing, inFlight+1)}
+		writings: make(chan writing, inFlight+1), cancels: map[int]context.CancelFunc{}}
 	go c.run()
 	return c
 }
@@ -143,28 +148,34 @@ func (c *Controller) Heard(h Heard) {
 	})
 }
 
-// Said takes a final result of speech recognition, decides whose each of
-// its words was, and hears each speaker's turn in it. It returns at once,
-// and a panic in it goes no further.
+// Said takes a result of speech recognition. Of a final one, it decides
+// whose each word was, and hears each speaker's turn in it. Each goes on to
+// be split into sentences, which a question is noticed in as soon as it is
+// finished: a partial one replaces the one before it of the same request,
+// which it holds all of. It returns at once, and a panic in it goes no
+// further.
 func (c *Controller) Said(s Said) {
 	if c == nil {
 		return
 	}
 	defer func() { _ = recover() }()
-	turns := s.heard()
-	for _, h := range turns {
-		c.Heard(h)
-	}
-	ss := s.sentences()
-	c.set(func() {
-		for _, one := range ss {
-			if len(c.sentences) >= waitingHeard {
-				c.sentences, c.lost = c.sentences[1:], c.lost+1
-			}
-			c.sentences = append(c.sentences, one)
+	if !s.Partial {
+		turns := s.heard()
+		for _, h := range turns {
+			c.Heard(h)
 		}
+		c.log("%s", s.counts(turns))
+	}
+	c.set(func() {
+		if n := len(c.results); s.Partial && n > 0 && c.results[n-1].Partial && c.results[n-1].Request == s.Request {
+			c.results[n-1] = s
+			return
+		}
+		if len(c.results) >= waitingHeard {
+			c.results, c.lost = c.results[1:], c.lost+1
+		}
+		c.results = append(c.results, s)
 	})
-	c.log("%s; %s", s.counts(turns), endings(ss))
 }
 
 // Report takes what the Mac says about listening.
@@ -268,8 +279,8 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 	now := c.now()
 	c.mu.Lock()
 	on, recording, display, leftOut, name := c.on, c.recording, c.display, c.leftOut, c.judge
-	heard, reports, sentences := c.heard, c.reports, c.sentences
-	c.heard, c.reports, c.sentences = nil, nil, nil
+	heard, reports, results := c.heard, c.reports, c.results
+	c.heard, c.reports, c.results = nil, nil, nil
 	c.mu.Unlock()
 
 	if f.enable(on) {
@@ -294,7 +305,14 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		all, mine := f.words()
 		c.log("heard %d pieces, %d words yours and %d others, listening %t; the window holds %d words, %d yours", len(heard), person, others, f.listening(), all, mine)
 	}
-	for _, said := range append(f.said(sentences), f.flush(now)...) {
+	var finished []utterance
+	for _, s := range results {
+		finished = append(finished, f.recognized(s)...)
+	}
+	for _, r := range f.stream.read() {
+		c.log("%s", r)
+	}
+	for _, said := range append(finished, f.flush(now)...) {
 		q, ok := notice(said)
 		if !ok {
 			f.state(said)
@@ -302,13 +320,42 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		}
 		who := map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who]
 		how := map[ending]string{byMark: "a mark", byPause: "a pause", open: "the end of the sound", byTime: "time"}[q.how]
-		if n, again := f.ask(q, now); again {
+		if n, again, kept := f.ask(q, now); again {
 			c.log("a question of %d words, %s, was asked within %s, so not again", len(strings.Fields(q.topic)), who, f.cfg.Again)
 		} else if n != 0 {
-			c.log("question %d noticed: %d words, %d key words, %s, its sentence ended by %s; so far %d noticed", n, len(strings.Fields(q.topic)), len(q.keys), who, how, f.noticed)
+			early := "not asked early"
+			if kept {
+				early = "asked early, and what was found for it kept"
+			}
+			c.log("question %d noticed: %d words, %d key words, %s, its sentence ended by %s, %s after its last word, %s; so far %d noticed, %d asked early, %d of them kept",
+				n, len(strings.Fields(q.topic)), len(q.keys), who, how, after(now, q.said), early, f.noticed, f.askedEarly, f.keptEarly)
+			if cd := f.card(n); kept && cd != nil && cd.done {
+				c.log("%s", f.timing(cd, now))
+			}
+		}
+	}
+	// A question still being asked is asked early.
+	g, asks := f.stream.growing()
+	var q question
+	if asks {
+		q, asks = notice(g)
+	}
+	if started, dropped := f.early(q, asks, now); started != 0 || dropped != 0 {
+		if dropped != 0 {
+			c.log("question %d, asked early, dropped: the sentence went on to ask something else, or nothing", dropped)
+		}
+		if started != 0 {
+			c.log("question %d asked early: %d words so far, %d key words, %s", started, len(strings.Fields(q.topic)), len(q.keys), map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who])
+		}
+	}
+	for n, cancel := range c.cancels {
+		if !f.waits(n) {
+			cancel()
+			delete(c.cancels, n)
 		}
 	}
 	if replied != nil {
+		early := f.card(replied.card) != nil && f.card(replied.card).early
 		shown, taken, write := f.reply(replied.card, replied.brief, replied.err, now)
 		meetings := map[string]bool{}
 		for _, p := range replied.brief.Points {
@@ -319,12 +366,19 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.log("answer %d came back after %s, too late to be taken", replied.card, replied.took.Round(time.Millisecond))
 		case replied.err != nil:
 			c.log("answer %d failed after %s: %s", replied.card, replied.took.Round(time.Millisecond), brief(replied.err))
+		case early:
+			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages, about %d tokens; kept for when its sentence is finished",
+				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages, briefTokens(replied.brief))
 		case write:
-			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages; for the local model to write",
-				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages)
+			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages, about %d tokens; for the local model to write",
+				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages, briefTokens(replied.brief))
 		default:
 			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages; %d shown; so far %d asked and %d lines shown",
 				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages, shown, f.answers, f.lines)
+		}
+		delete(c.cancels, replied.card)
+		if cd := f.card(replied.card); taken && cd != nil && cd.done {
+			c.log("%s", f.timing(cd, now))
 		}
 	}
 	if n := f.abandonAnswer(now); n != 0 {
@@ -406,6 +460,9 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 	if wrote != nil {
 		c.wrote(f, wrote, now)
 	}
+	if n := f.abandonReword(now); n != 0 {
+		c.log("reword %d given up on after %s, so its question goes as heard", n, now.Sub(f.rewordAsked).Round(time.Millisecond))
+	}
 	if n := f.abandonWrite(now); n != 0 {
 		c.log("write %d given up on after %s", n, now.Sub(f.writeAsked).Round(time.Millisecond))
 	}
@@ -423,9 +480,16 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.ask(text, ask)
 		}
 	}
+	if writer != nil && c.writes.Load() < inFlight {
+		if p, n, ok := f.rewordDue(now); ok {
+			c.log("reword %d asked: about %d tokens", n, tokens(p.System+p.User))
+			c.write(writer, p, writing{reword: n})
+		}
+	}
 	if c.answering.Load() < inFlight {
 		if topic, n, ok := f.answerDue(now); ok {
-			c.log("answer %d asked, %d words", n, len(strings.Fields(topic)))
+			cd := f.card(n)
+			c.log("answer %d asked, %d words, %d of them the local model's, %s", n, len(strings.Fields(topic)), len(cd.q.extra), map[bool]string{true: "early", false: "for a card shown"}[cd.early])
 			c.answer(topic, n)
 		}
 	}
@@ -497,7 +561,10 @@ func (c *Controller) ask(text string, ask int) {
 // does.
 func (c *Controller) answer(topic string, card int) {
 	c.answering.Add(1)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
+	c.cancels[card] = cancel
 	go func() {
+		defer cancel()
 		r := reply{card: card}
 		began := c.now()
 		defer func() {
@@ -515,8 +582,6 @@ func (c *Controller) answer(topic string, card int) {
 			r.err = errors.New("On Air has no address for On the Record")
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
-		defer cancel()
 		r.brief, r.err = c.archive.Answer(ctx, topic, c.cfg.Transcript)
 	}()
 }
@@ -547,6 +612,18 @@ func (c *Controller) round(judge Judge, r Round, round int) {
 // and On Air's own words: never what was asked or written.
 func (c *Controller) wrote(f *follow, w *writing, now time.Time) {
 	took := w.took.Round(time.Millisecond)
+	if w.reword != 0 {
+		added, failed, taken := f.reworded(w.reword, w.text, w.err, now)
+		switch {
+		case !taken:
+			c.log("reword %d came back after %s, too late to be taken", w.reword, took)
+		case failed != "":
+			c.log("reword %d failed after %s, so its question goes as heard: %s", w.reword, took, failed)
+		default:
+			c.log("reword %d came back in %s: %s added", w.reword, took, plural(added, "word"))
+		}
+		return
+	}
 	if w.card != 0 {
 		o, why, taken := f.answerWritten(w.card, w.text, w.err)
 		var came string
@@ -565,6 +642,9 @@ func (c *Controller) wrote(f *follow, w *writing, now time.Time) {
 		}
 		c.log("write %d came back in %s: %s; so far %d written, %d answered, %d not in the archive, %d rejected",
 			w.card, took, came, f.written, f.answeredN, f.notIn, f.rejectedN)
+		if cd := f.card(w.card); cd != nil {
+			c.log("%s", f.timing(cd, now))
+		}
 		return
 	}
 	result, taken := f.checkedBy(w.check, w.text, w.err, now)
@@ -592,7 +672,11 @@ func (c *Controller) write(writer Writer, p Prompt, w writing) {
 			default:
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.WriteTimeout)
+		timeout := c.cfg.WriteTimeout
+		if w.reword != 0 {
+			timeout = c.cfg.RewordTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		w.text, w.err = writer.Write(ctx, p)
 	}()

@@ -2,8 +2,10 @@ package live_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,7 +125,200 @@ func TestTheRealWriter(t *testing.T) {
 			t.Errorf("%q: %s %q, from %q", tc.said, result, shown, text)
 		}
 	}
+	// A question whose answer sits under a heading on the roadmap, in
+	// words other than the question's: reworded, and answered from about
+	// 2,200 tokens of lines.
+	road := live.Roadmap()
+	for _, said := range []string{"what features did Rafael want in the new version", "how much did Kestrel raise", "when does the new Kestrel version go out"} {
+		p, read := live.RewordFor(said)
+		text, took := write(p, 30*time.Second)
+		added, topic := read(text)
+		t.Logf("%q reworded in %v: %q, so On the Record is asked %q", said, took, added, topic)
+		slowest = max(slowest, took)
+		if took > time.Second {
+			t.Errorf("%q took %v to reword", said, took)
+		}
+	}
+	p, _ = live.RewordFor("what features did Rafael want in the new version")
+	text, _ := write(p, 30*time.Second)
+	ap, read := live.AnswerFor("what features did Rafael want in the new version", road, text)
+	answer, took := write(ap, 30*time.Second)
+	shown, cited, result := read(answer)
+	t.Logf("the features question in %v, %d prompt characters: %s %q citing %d lines", took, len(ap.System+ap.User), result, shown, len(cited))
+	if result != "answered" || len(cited) == 0 || !strings.Contains(cited[0].Under, "Capabilities") {
+		t.Errorf("the features question: %s %q citing %+v, from %q", result, shown, cited, answer)
+	}
+	slowest = max(slowest, took)
 	if slowest > 5*time.Second {
 		t.Errorf("the slowest took %v, once loaded", slowest)
+	}
+}
+
+// timedScreen is the Mac as the live side sees it, keeping when each panel
+// was shown, and the diagnostic log.
+type timedScreen struct {
+	mu     sync.Mutex
+	shown  []time.Time
+	panels []live.Panel
+	lines  []string
+}
+
+func (s *timedScreen) Ask()                       {}
+func (s *timedScreen) Listen(bool, time.Duration) {}
+func (s *timedScreen) Log(line string)            { s.mu.Lock(); s.lines = append(s.lines, line); s.mu.Unlock() }
+func (s *timedScreen) Show(p live.Panel) {
+	s.mu.Lock()
+	s.shown, s.panels = append(s.shown, time.Now()), append(s.panels, p)
+	s.mu.Unlock()
+}
+func (s *timedScreen) first(ok func(live.Answer) bool) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, p := range s.panels {
+		if len(p.Answers) > 0 && ok(p.Answers[0]) {
+			return s.shown[i]
+		}
+	}
+	return time.Time{}
+}
+
+type slowArchive struct {
+	took time.Duration
+	mu   sync.Mutex
+	at   []time.Time
+}
+
+func (a *slowArchive) Connections(ctx context.Context, text string) (live.Found, error) {
+	return live.Found{}, nil
+}
+func (a *slowArchive) Answer(ctx context.Context, question string, transcript bool) (live.Brief, error) {
+	a.mu.Lock()
+	a.at = append(a.at, time.Now())
+	a.mu.Unlock()
+	select {
+	case <-time.After(a.took):
+		return live.Roadmap(), nil
+	case <-ctx.Done():
+		return live.Brief{}, ctx.Err()
+	}
+}
+
+// noReword is a writer that writes answers but rewords nothing, as before
+// questions were reworded.
+type noReword struct{ live.Writer }
+
+func (w noReword) Write(ctx context.Context, p live.Prompt) (string, error) {
+	if p.Quick {
+		return "", errors.New("not reworded")
+	}
+	return w.Writer.Write(ctx, p)
+}
+
+// TestHowLongAnAnswerTakes runs the live side on this Mac with the real
+// writing model, when ONAIR_LOCAL_MODEL_PYTHON names its Python, and a
+// made-up On the Record that takes as long as the owner's did in a call,
+// 1.8 to 5.0 s, and times a made-up question from its last word to its
+// answer on the panel. After: partial results come as recognition would
+// send them, each word three tenths of a second after it ends, and how far
+// the sound has gone four times a second. Before: the final result comes at
+// once after the question, as it did only when the question ended its
+// request's fifteen seconds, which on average was 7.5 s later; and the
+// question isn't reworded, and the writer reads 1,500 tokens.
+func TestHowLongAnAnswerTakes(t *testing.T) {
+	python := os.Getenv("ONAIR_LOCAL_MODEL_PYTHON")
+	if python == "" {
+		t.Skip("ONAIR_LOCAL_MODEL_PYTHON isn't set")
+	}
+	w := localmodel.NewWriter(python)
+	defer w.Close()
+	w.Warm()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if _, err := w.Write(ctx, live.Prompt{System: "Reply with one word.", User: "Ready?", Most: 2}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	question := "So what features did Rafael want in the new version?"
+	for _, before := range []bool{true, false} {
+		for _, took := range []time.Duration{1800 * time.Millisecond, 3300 * time.Millisecond, 5 * time.Second} {
+			screen := &timedScreen{}
+			archive := &slowArchive{took: took}
+			cfg := live.Defaults
+			var writer live.Writer = w
+			if before {
+				cfg.AnswerTokens, writer = 1500, noReword{w}
+			}
+			c := live.Start(cfg, archive, screen, time.Now, nil, map[string]live.Writer{"local": writer})
+			c.Judging("local")
+			c.Enabled(true)
+			c.Capturing("", true)
+			c.Recording(true)
+			time.Sleep(300 * time.Millisecond)
+			began := time.Now()
+			words := strings.Fields(question)
+			segments := func(n int) []live.Segment {
+				var out []live.Segment
+				for i, w := range words[:n] {
+					out = append(out, live.Segment{Text: w, At: time.Duration(i) * 350 * time.Millisecond, Length: 250 * time.Millisecond})
+				}
+				return out
+			}
+			end := began.Add(time.Duration(len(words)-1)*350*time.Millisecond + 250*time.Millisecond)
+			said := func(partial bool, n int) {
+				steps := int(time.Since(began)/(100*time.Millisecond)) - 1
+				c.Said(live.Said{Began: began, Request: 1, Partial: partial, Segments: segments(n), Step: 100 * time.Millisecond, Mic: make([]float64, max(steps, 0)), Call: make([]float64, max(steps, 0))})
+			}
+			if before {
+				time.Sleep(time.Until(end.Add(100 * time.Millisecond)))
+				said(false, len(words))
+			} else {
+				heard, sent := 0, time.Time{}
+				for time.Since(end) < 3*time.Second && screen.first(func(live.Answer) bool { return true }).IsZero() {
+					n := 0
+					for i := range words {
+						if time.Since(began) >= time.Duration(i)*350*time.Millisecond+550*time.Millisecond {
+							n = i + 1
+						}
+					}
+					if n != heard || time.Since(sent) >= 250*time.Millisecond {
+						said(true, n)
+						heard, sent = n, time.Now()
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			deadline := time.Now().Add(20 * time.Second)
+			var answered time.Time
+			for answered.IsZero() && time.Now().Before(deadline) {
+				answered = screen.first(func(a live.Answer) bool { return a.Text != "" || a.Note != "" && !strings.HasSuffix(a.Note, "…") })
+				time.Sleep(20 * time.Millisecond)
+			}
+			// Stopping the recording leaves the writer warm for the next run,
+			// as a call goes on.
+			c.Recording(false)
+			noticed := screen.first(func(live.Answer) bool { return true })
+			var steps string
+			screen.mu.Lock()
+			for _, l := range screen.lines {
+				if strings.HasPrefix(l, "card ") {
+					steps = l
+				}
+				if strings.HasPrefix(l, "write ") || strings.HasPrefix(l, "reword ") || strings.HasPrefix(l, "answer ") {
+					t.Logf("  %s", l)
+				}
+			}
+			final := screen.panels[len(screen.panels)-1]
+			screen.mu.Unlock()
+			mode := "after"
+			if before {
+				mode = "before (plus the wait for the request's end, 7.5 s on average)"
+			}
+			t.Logf("%s, On the Record taking %v: card shown %.1f s after the question's last word, answer %.1f s after it; %s", mode, took, noticed.Sub(end).Seconds(), answered.Sub(end).Seconds(), steps)
+			if len(final.Answers) > 0 {
+				t.Logf("  answer: %q %q", final.Answers[0].Text, final.Answers[0].Note)
+			}
+			if answered.IsZero() {
+				t.Errorf("%s: no answer", mode)
+			}
+		}
 	}
 }

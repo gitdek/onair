@@ -7,14 +7,20 @@ import (
 	"time"
 )
 
-// Said is a final result of speech recognition, which hears the call's
-// sound and the microphone added into one: its segments, a word or so each,
-// when its sound began, and how loud each of the two sounds was through it,
-// a step at a time. The Mac measures, and whose each word was is decided
-// here.
+// Said is a result of speech recognition, which hears the call's sound and
+// the microphone added into one: its segments, a word or so each, when its
+// sound began, and how loud each of the two sounds was through it, a step
+// at a time. The Mac measures, and whose each word was is decided here.
 type Said struct {
 	Began    time.Time
 	Segments []Segment
+	// Partial marks a partial result: all the words of its request so
+	// far, which later results may revise, with the loudness of all the
+	// sound the request has been given. The final result ends the
+	// request. Request numbers it; a final result of request 0 stands
+	// alone.
+	Partial bool
+	Request int
 	// Step is how long each step of loudness lasts. The first starts at
 	// Began.
 	Step time.Duration

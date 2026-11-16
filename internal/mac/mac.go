@@ -42,7 +42,7 @@ type Handler interface {
 	Window(name string)
 	// Folder is the folder a person picked for recordings to go to.
 	Folder(path string)
-	// Heard is a final result of the live side's speech recognition, which
+	// Heard is a result of the live side's speech recognition, which
 	// hears the call's sound and the microphone added into one. It arrives
 	// on the live side's own thread.
 	Heard(Said)
@@ -112,13 +112,18 @@ const (
 	LiveDiag = int(C.ONAIR_LIVE_DIAG)
 )
 
-// Said is a final result of speech recognition: its words, and how loud
-// each of the two sounds was while they were said, which the live side
-// decides whose they were by.
+// Said is a result of speech recognition: its words, and how loud each of
+// the two sounds was while they were said, which the live side decides
+// whose they were by.
 type Said struct {
 	// Began is when the result's sound began, in seconds since 1970.
 	Began    float64
 	Segments []Segment
+	// Partial marks a partial result, which holds all its request's words
+	// so far, or none, to say how far its sound has gone; the final one
+	// ends the request, which Request numbers.
+	Partial bool
+	Request int
 	// Step is how long each step of loudness lasts, in seconds. The first
 	// starts at Began.
 	Step float64
@@ -234,12 +239,12 @@ func onairFolder(path *C.char) {
 }
 
 //export onairHeard
-func onairHeard(began C.double, segments *C.onair_segment, count C.int, step C.double, mic, call *C.double, steps C.int) {
+func onairHeard(began C.double, segments *C.onair_segment, count C.int, step C.double, mic, call *C.double, steps C.int, partial C.int, request C.long) {
 	h := current()
 	if h == nil {
 		return
 	}
-	s := Said{Began: float64(began), Step: float64(step)}
+	s := Said{Began: float64(began), Step: float64(step), Partial: partial != 0, Request: int(request)}
 	if segments != nil && count > 0 {
 		for _, seg := range unsafe.Slice(segments, int(count)) {
 			s.Segments = append(s.Segments, Segment{Text: C.GoString(seg.text), At: float64(seg.at), Length: float64(seg.length)})
@@ -447,7 +452,9 @@ func LiveAsk() { C.onair_live_ask() }
 
 // Listen starts or stops recognizing speech in capture's two sounds,
 // added into one, on the Mac only, and returns at once. While on, Heard
-// reports the finished words of about every chunk seconds of sound.
+// reports the partial results of a request every chunk seconds of sound as
+// they come, how far its sound has gone four times a second, and its final
+// result.
 func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chunk)) }
 
 // Link is a link the live panel shows.

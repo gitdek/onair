@@ -121,7 +121,14 @@ type Writer interface {
 type Prompt struct {
 	System, User string
 	Most         int
+	// Quick says not to wait for the model to load: ErrLoading comes at
+	// once instead.
+	Quick bool
 }
+
+// RewordWait is how long a question waits for the writer to be free to
+// reword it before it goes to On the Record as heard.
+const RewordWait = time.Second
 
 // ErrLoading says the local model is still loading, which takes a few
 // seconds after it starts. It is no failure: the next question may find it
@@ -280,10 +287,11 @@ type Config struct {
 	Again      time.Duration // how long a question asked isn't asked again
 	Transcript bool          // whether answers draw on the transcripts too, which takes the archive longer
 
-	AnswerTokens int           // tokens of a brief's lines the local model answers from, about
-	WriteTimeout time.Duration // how long it may take to write an answer, or to check what was said, loading included
-	CheckEvery   time.Duration // the least time between two checks of what was said against the record
-	Recall       time.Duration // how long the lines of a brief are kept to check what is said against
+	AnswerTokens  int           // tokens of a brief's lines the local model answers from, about
+	WriteTimeout  time.Duration // how long it may take to write an answer, or to check what was said, loading included
+	RewordTimeout time.Duration // how long it may take to give other words for a question, after which it goes as heard
+	CheckEvery    time.Duration // the least time between two checks of what was said against the record
+	Recall        time.Duration // how long the lines of a brief are kept to check what is said against
 }
 
 // Defaults are the numbers On Air runs with.
@@ -297,7 +305,9 @@ var Defaults = Config{
 	Timeout: 10 * time.Second,
 	Chunk:   15 * time.Second,
 	Linger:  2 * time.Minute,
-	Tick:    time.Second,
+	// Recognition's results come several times a second, and each wakes
+	// the controller; the tick only catches what is due by the clock.
+	Tick: 250 * time.Millisecond,
 
 	JudgeEvery:   10 * time.Second,
 	JudgeTimeout: 2 * time.Second,
@@ -312,9 +322,11 @@ var Defaults = Config{
 
 	// On the owner's Mac the local model answered from 1,100 tokens of
 	// made-up notes in 0.5 to 1.5 s, and checked what was said in 0.3 to
-	// 1.5 s, once loaded, which took 2 s.
-	AnswerTokens: 1500,
-	WriteTimeout: 8 * time.Second,
-	CheckEvery:   15 * time.Second,
-	Recall:       5 * time.Minute,
+	// 1.5 s, once loaded, which took 2 s. In a call it answered from
+	// 1,300 to 1,600 tokens in 1.0 to 1.9 s.
+	AnswerTokens:  2500,
+	WriteTimeout:  8 * time.Second,
+	RewordTimeout: time.Second,
+	CheckEvery:    15 * time.Second,
+	Recall:        5 * time.Minute,
 }

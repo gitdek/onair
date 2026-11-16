@@ -65,15 +65,23 @@ type follow struct {
 	// rejected and differences found.
 	written, answeredN, notIn, rejectedN, checksBack, checkRejected, found int
 
-	open        *utterance // the last utterance of a result, which the next may carry on
-	cards       []*card    // answer cards, newest first
-	cardsMade   int        // cards made so far, which number them
-	answering   int        // the card whose question waits for an answer, or 0
-	answerAsked time.Time  // when it was asked
-	lately      []lately   // questions asked lately, which aren't asked again
-	noticed     int        // questions noticed so far, for the diagnostic log
-	answers     int        // and asked
-	lines       int        // and lines of answers shown
+	stream      stream    // speech recognition's results, which hand on sentences once finished
+	cards       []*card   // answer cards, newest first, and one asked early, not shown, before them
+	cardsMade   int       // cards made so far, which number them
+	answering   int       // the card whose question waits for an answer, or 0
+	answerAsked time.Time // when it was asked
+	lately      []lately  // questions asked lately, which aren't asked again
+	// The writer rewords one question at a time for On the Record, first
+	// of what it does.
+	rewording   int       // the card whose question it rewords, or 0
+	rewordAsked time.Time // when it was asked
+	slow        bool      // it said lately that its model is loading, so questions go as heard
+	noticed     int       // questions noticed so far, for the diagnostic log
+	answers     int       // and asked
+	lines       int       // and lines of answers shown
+	// Questions asked early, before their sentence was finished: so far,
+	// kept for the question once it was, and dropped.
+	askedEarly, keptEarly, droppedEarly int
 
 	allowed   Problem // SpeechAllowed, SpeechRefused or SpeechUnsupported, once the Mac has said
 	speech    string  // what is wrong with listening, if anything
@@ -109,7 +117,7 @@ func (f *follow) enable(on bool) (ask bool) {
 	ask = on && !f.on
 	f.on = on
 	if !on {
-		f.heard, f.fresh, f.news, f.calls, f.open = nil, false, false, nil, nil
+		f.heard, f.fresh, f.news, f.calls, f.stream = nil, false, false, nil, stream{}
 		f.statements, f.newFact, f.differs = nil, false, nil
 	}
 	return ask
@@ -134,7 +142,10 @@ func (f *follow) writes(on bool) {
 				f.fallback(c)
 			}
 		}
-		f.writing, f.checking, f.check, f.wrote, f.differs = 0, 0, checkAsked{}, "", nil
+		f.writing, f.checking, f.check, f.wrote, f.differs, f.rewording = 0, 0, checkAsked{}, "", nil, 0
+	}
+	if on && !f.writer {
+		f.slow = false
 	}
 	f.writer = on
 }
@@ -157,7 +168,7 @@ func (f *follow) record(on bool, now time.Time) {
 		f.asking, f.asked, f.result, f.resultAt = 0, time.Time{}, "", time.Time{}
 		f.news, f.calls, f.inRound, f.judged, f.verdict, f.loading = false, nil, 0, time.Time{}, "", false
 		f.speech, f.transient, f.archive, f.answered, f.dropped = "", false, "", "", ""
-		f.open, f.cards, f.answering, f.lately = nil, nil, 0, nil
+		f.stream, f.cards, f.answering, f.lately, f.rewording = stream{}, nil, 0, nil, 0
 		f.writing, f.wrote, f.statements, f.newFact, f.records = 0, "", nil, false, nil
 		f.checking, f.checked, f.check, f.differs = 0, time.Time{}, checkAsked{}, nil
 	case !on && f.recording:
@@ -312,7 +323,7 @@ func (f *follow) due(now time.Time) (text string, ask int, ok bool) {
 // f.cfg.JudgeEvery after it, when the window holds f.cfg.Least words, and
 // never while a round waits for its verdict.
 func (f *follow) roundDue(now time.Time) (Round, int, bool) {
-	if !f.listening() || !f.judging || f.inRound != 0 || !f.news || f.writing != 0 || f.checking != 0 {
+	if !f.listening() || !f.judging || f.inRound != 0 || !f.news || f.writing != 0 || f.checking != 0 || f.pending() {
 		return Round{}, 0, false
 	}
 	if !f.judged.IsZero() && now.Sub(f.judged) < f.cfg.JudgeEvery {
@@ -452,12 +463,15 @@ func (f *follow) panel(now time.Time) Panel {
 	}
 	p.Headline = f.headline(now)
 	for _, c := range f.cards {
+		if c.early {
+			continue
+		}
 		a := Answer{Question: c.q.shown, Text: c.text, Sources: append([]AnswerLine(nil), c.sources...), Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
 		switch {
 		case c.write || c.n == f.writing:
 			a.Lines, a.Note = nil, "Reading what On the Record found…"
 		case !c.done:
-			a.Note = "Looking in On the Record…"
+			a.Note = "Looking…"
 		}
 		p.Answers = append(p.Answers, a)
 	}
@@ -623,14 +637,25 @@ func sentence(s string) string {
 }
 
 // card is an answer card: a question noticed in the call, and what On the
-// Record answered about it.
+// Record answered about it. One asked early, while its sentence was still
+// being said, isn't shown until the finished sentence asks the same.
 type card struct {
 	n     int
 	q     question
-	asked time.Time // when it was asked, or zero while it waits
-	done  bool      // its answer came, or it was given up on
-	lines []AnswerLine
-	note  string
+	early bool
+	// failed says On the Record couldn't answer it while it was asked
+	// early: it is asked again once, if its sentence asks the same.
+	failed bool
+	// search is what On the Record is asked: the question as heard, and
+	// the writer's other words for what it asks about, once it has
+	// reworded it, or given up on that.
+	search   string
+	reworded bool
+	asked    time.Time // when On the Record was asked, or zero while it waits
+	brief    *Brief    // what it answered, once it did
+	done     bool      // its answer came, or it was given up on
+	lines    []AnswerLine
+	note     string
 	// For the writer: the lines of the brief it answers from, numbered
 	// from 1 in this order, whether it waits to be written, and the
 	// answer and its sources once written and checked.
@@ -638,59 +663,77 @@ type card struct {
 	write   bool
 	text    string
 	sources []AnswerLine
+	// When each step began and ended, for the diagnostic log.
+	made, noticed, rewordAsked, rewordCame, fetched, writeAsked time.Time
 }
 
-// said takes the sentences of a result, while listening, and returns
-// those that ended. The last, when it runs to the end of its result's
-// sound, is held: the next result carries it on when it starts as that
-// result's sound does, within two Pauses of it, and else it ended too.
-func (f *follow) said(ss []utterance) []utterance {
+// recognized takes a result of speech recognition, while listening, and
+// returns the sentences it finished.
+func (f *follow) recognized(s Said) []utterance {
 	if !f.listening() {
 		return nil
 	}
-	var ended []utterance
-	if held := f.open; held != nil {
-		f.open = nil
-		if len(ss) > 0 && ss[0].first && ss[0].from.Sub(held.to) <= 2*Pause+250*time.Millisecond && len(strings.Fields(held.text)) < 60 {
-			joined := *held
-			joined.text, joined.to, joined.ended = held.text+" "+ss[0].text, ss[0].to, ss[0].ended
-			ss = append([]utterance{joined}, ss[1:]...)
-		} else {
-			ended = append(ended, *held)
-		}
-	}
-	for i, s := range ss {
-		if i == len(ss)-1 && s.ended == open {
-			f.open = &s
-			break
-		}
-		ended = append(ended, s)
-	}
-	return ended
+	return f.stream.take(s)
 }
 
-// flush ends a held sentence that no result carried on within a result's
-// length and five seconds.
+// flush hands on a sentence held at the end of a request that the next
+// doesn't carry on, or that no result followed within a request's length
+// and five seconds.
 func (f *follow) flush(now time.Time) []utterance {
 	if !f.listening() {
-		f.open = nil
-	}
-	if f.open == nil || now.Sub(f.open.to) < f.cfg.Chunk+5*time.Second {
+		f.stream = stream{}
 		return nil
 	}
-	s := *f.open
-	f.open, s.ended = nil, byTime
-	return []utterance{s}
+	return f.stream.flush(now, f.cfg.Chunk+5*time.Second)
 }
 
 // ask takes a question noticed in the call. A card for it goes on top, to
 // be asked, and the panel keeps f.cfg.Cards, unless the same question was
-// asked within f.cfg.Again.
-func (f *follow) ask(q question, now time.Time) (n int, again bool) {
+// asked within f.cfg.Again. A question asked early that asks the same
+// becomes its card, with what was found for it so far.
+func (f *follow) ask(q question, now time.Time) (n int, again, kept bool) {
 	if f.cfg.Cards <= 0 {
-		return 0, false
+		return 0, false, false
 	}
 	f.noticed++
+	if f.askedLately(q, now) {
+		f.dropEarly()
+		return 0, true, false
+	}
+	f.lately = append(f.lately, lately{keys: q.keys, at: now})
+	c := f.earlyCard()
+	if c != nil && same(c.q.keys, q.keys) {
+		extra := c.q.extra
+		c.early, c.q, c.noticed = false, q, now
+		c.q.extra = extra
+		f.keptEarly++
+		kept = true
+		switch {
+		case c.failed:
+			c.failed, c.asked = false, time.Time{}
+		case c.brief != nil:
+			f.settle(c)
+		}
+	} else {
+		f.dropEarly()
+		f.cardsMade++
+		c = &card{n: f.cardsMade, q: q, made: now, noticed: now}
+		f.cards = append([]*card{c}, f.cards...)
+	}
+	shown := 0
+	f.cards = slices.DeleteFunc(f.cards, func(c *card) bool {
+		if c.early {
+			return false
+		}
+		shown++
+		return shown > f.cfg.Cards
+	})
+	return c.n, false, kept
+}
+
+// askedLately says whether the same question was asked within
+// f.cfg.Again, and forgets those asked before.
+func (f *follow) askedLately(q question, now time.Time) bool {
 	kept := f.lately[:0]
 	for _, l := range f.lately {
 		if now.Sub(l.at) < f.cfg.Again {
@@ -698,41 +741,182 @@ func (f *follow) ask(q question, now time.Time) (n int, again bool) {
 		}
 	}
 	f.lately = kept
-	for _, l := range f.lately {
-		if same(l.keys, q.keys) {
-			return 0, true
+	return slices.ContainsFunc(f.lately, func(l lately) bool { return same(l.keys, q.keys) })
+}
+
+// early takes the sentence being said, as notice reads it, when it asks
+// something worth asking: On the Record is asked about it before it is
+// finished, on a card of its own that isn't shown, one at a time. One
+// asked early that the sentence no longer asks the same as is dropped,
+// and what is still out for it given up on. It says which card it started
+// and which it dropped, if any.
+func (f *follow) early(q question, asks bool, now time.Time) (started, dropped int) {
+	c := f.earlyCard()
+	if c != nil && asks && same(c.q.keys, q.keys) {
+		return 0, 0
+	}
+	if c != nil {
+		dropped = f.dropEarly()
+	}
+	if !asks || !f.listening() || f.cfg.Cards <= 0 || f.askedLately(q, now) {
+		return 0, dropped
+	}
+	f.cardsMade++
+	f.askedEarly++
+	f.cards = append([]*card{{n: f.cardsMade, q: q, early: true, made: now}}, f.cards...)
+	return f.cardsMade, dropped
+}
+
+// earlyCard is the card asked early, if there is one.
+func (f *follow) earlyCard() *card {
+	for _, c := range f.cards {
+		if c.early {
+			return c
 		}
 	}
-	f.lately = append(f.lately, lately{keys: q.keys, at: now})
-	f.cardsMade++
-	f.cards = append([]*card{{n: f.cardsMade, q: q}}, f.cards...)
-	if len(f.cards) > f.cfg.Cards {
-		f.cards = f.cards[:f.cfg.Cards]
+	return nil
+}
+
+// dropEarly drops the card asked early, and returns its number, or 0.
+func (f *follow) dropEarly() int {
+	c := f.earlyCard()
+	if c == nil {
+		return 0
 	}
-	return f.cardsMade, false
+	f.cards = slices.DeleteFunc(f.cards, func(d *card) bool { return d == c })
+	if f.answering == c.n {
+		f.answering = 0
+	}
+	if f.rewording == c.n {
+		f.rewording = 0
+	}
+	f.droppedEarly++
+	return c.n
+}
+
+// waits says whether a card's question is still being asked: On the
+// Record's answer to it waits, and else whether the writer's.
+func (f *follow) waits(n int) bool { return n != 0 && f.answering == n }
+
+// order is the cards in the order their steps are taken: those shown,
+// oldest first, then the one asked early.
+func (f *follow) order() []*card {
+	var out []*card
+	var early *card
+	for i := len(f.cards) - 1; i >= 0; i-- {
+		if c := f.cards[i]; c.early {
+			early = c
+		} else {
+			out = append(out, c)
+		}
+	}
+	if early != nil {
+		out = append(out, early)
+	}
+	return out
+}
+
+// rewordDue says which card's question to have the writer reword for On
+// the Record now: the first in order that hasn't been, nor asked, while
+// listening with a writer chosen that isn't loading, and never while it
+// writes or checks, or a round is out. One it returns is under way:
+// reworded or abandonReword ends it.
+func (f *follow) rewordDue(now time.Time) (Prompt, int, bool) {
+	if !f.listening() || !f.writer || f.slow || f.rewording != 0 || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+		return Prompt{}, 0, false
+	}
+	for _, c := range f.order() {
+		if c.asked.IsZero() && !c.reworded {
+			c.reworded, c.rewordAsked = true, now
+			f.rewording, f.rewordAsked = c.n, now
+			return rewordPrompt(c.q), c.n, true
+		}
+	}
+	return Prompt{}, 0, false
+}
+
+// reworded takes what the writer wrote for a card's question: its other
+// words for what the question asks about, which On the Record is asked
+// with the question as heard, and the lines of its brief are ranked by.
+// When it failed, the question goes as heard. It says how many words it
+// added, and what went wrong in On Air's own words.
+func (f *follow) reworded(n int, text string, err error, now time.Time) (added int, failed string, taken bool) {
+	if n == 0 || n != f.rewording {
+		return 0, "", false
+	}
+	f.rewording = 0
+	c := f.card(n)
+	if c == nil {
+		return 0, "", true
+	}
+	c.rewordCame = now
+	if err != nil {
+		f.slow = errors.Is(err, ErrLoading)
+		return 0, brief(err), true
+	}
+	f.slow = false
+	c.q.extra = readReword(text, c.q)
+	var more []string
+	for _, k := range c.q.extra {
+		more = append(more, k.word)
+	}
+	c.search = strings.TrimSpace(c.q.topic + " " + strings.Join(more, " "))
+	return len(more), "", true
+}
+
+// abandonReword gives up on a rewording the writer is late with, so the
+// question goes as heard.
+func (f *follow) abandonReword(now time.Time) (n int) {
+	if f.rewording == 0 || now.Sub(f.rewordAsked) <= f.cfg.RewordTimeout+250*time.Millisecond {
+		return 0
+	}
+	n, f.rewording = f.rewording, 0
+	return n
+}
+
+// ready says whether a card's question can go to On the Record: once the
+// writer has reworded it or failed to, or at once without a writer, or
+// one that is loading, or once RewordWait has gone by with the writer
+// busy.
+func (f *follow) ready(c *card, now time.Time) bool {
+	switch {
+	case !f.writer || f.slow:
+		return true
+	case c.reworded:
+		return f.rewording != c.n
+	}
+	return now.Sub(c.made) >= RewordWait
 }
 
 // answerDue says which card's question to ask On the Record now: the
-// oldest not yet asked, while listening, and never while another waits for
-// its answer. A question it returns is under way: reply or abandonAnswer
-// ends it.
+// first in order not yet asked, once it is ready, while listening, and
+// never while another waits for its answer. A question it returns is
+// under way: reply or abandonAnswer ends it.
 func (f *follow) answerDue(now time.Time) (topic string, n int, ok bool) {
 	if !f.listening() || f.answering != 0 {
 		return "", 0, false
 	}
-	for i := len(f.cards) - 1; i >= 0; i-- {
-		if c := f.cards[i]; c.asked.IsZero() {
-			c.asked, f.answering, f.answerAsked = now, c.n, now
-			f.answers++
-			return c.q.topic, c.n, true
+	for _, c := range f.order() {
+		if !c.asked.IsZero() {
+			continue
 		}
+		if !f.ready(c, now) {
+			return "", 0, false
+		}
+		c.asked, f.answering, f.answerAsked = now, c.n, now
+		f.answers++
+		if c.search == "" {
+			c.search = c.q.topic
+		}
+		return c.search, c.n, true
 	}
 	return "", 0, false
 }
 
 // reply takes On the Record's answer to a card's question: the lines that
 // answer it, or that the archive has none, or what went wrong. One that
-// nothing waits for any more is dropped.
+// nothing waits for any more is dropped. A card asked early keeps its
+// answer until its sentence is finished.
 func (f *follow) reply(n int, b Brief, err error, now time.Time) (shown int, taken, write bool) {
 	if n == 0 || n != f.answering {
 		return 0, false, false
@@ -745,15 +929,30 @@ func (f *follow) reply(n int, b Brief, err error, now time.Time) (shown int, tak
 	if c == nil {
 		return 0, true, false
 	}
+	c.fetched = now
 	if err != nil {
+		if c.early {
+			// Asked again, once, when its sentence is finished.
+			c.failed = true
+			return 0, true, false
+		}
 		c.done, c.note = true, sentence(brief(err))
 		return 0, true, false
 	}
-	// The lines that share the question's words are kept, and shown if
-	// the writer can't answer.
-	c.lines = answerLines(c.q, b, 3)
+	c.brief = &b
+	if c.early {
+		return 0, true, false
+	}
+	return f.settle(c)
+}
+
+// settle takes the brief of a shown card: the lines that share the
+// question's words are kept, and shown if the writer can't answer, and the
+// lines the writer answers from are chosen.
+func (f *follow) settle(c *card) (shown int, taken, write bool) {
+	c.lines = answerLines(c.q, *c.brief, 3)
 	if f.writer {
-		if from := passages(c.q, b, f.cfg.AnswerTokens); len(from) > 0 {
+		if from := passages(c.q, *c.brief, f.cfg.AnswerTokens); len(from) > 0 {
 			c.from, c.write = from, true
 			return 0, true, true
 		}
@@ -777,12 +976,12 @@ func (f *follow) fallback(c *card) {
 // round is out. One it returns is under way: answerWritten or abandonWrite ends
 // it.
 func (f *follow) writeDue(now time.Time) (Prompt, int, bool) {
-	if !f.listening() || !f.writer || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+	if !f.listening() || !f.writer || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 {
 		return Prompt{}, 0, false
 	}
 	for i := len(f.cards) - 1; i >= 0; i-- {
 		if c := f.cards[i]; c.write {
-			c.write = false
+			c.write, c.writeAsked = false, now
 			f.writing, f.writeAsked = c.n, now
 			return answerPrompt(c.q, c.from), c.n, true
 		}
@@ -812,7 +1011,7 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 		f.fallback(c)
 		return 0, "", true
 	}
-	f.wrote = ""
+	f.wrote, f.slow = "", false
 	f.written++
 	shown, cited, o, why := readAnswer(text, len(c.from))
 	c.done, c.lines = true, nil
@@ -893,16 +1092,14 @@ func (f *follow) remember(b Brief, now time.Time) {
 // only when a record shares a key word with what was said. A check it
 // returns is under way: checkedBy or abandonCheck ends it.
 func (f *follow) checkDue(now time.Time) (Prompt, int, int, int, bool) {
-	if !f.listening() || !f.writer || !f.newFact || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+	if !f.listening() || !f.writer || !f.newFact || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 {
 		return Prompt{}, 0, 0, 0, false
 	}
 	if !f.checked.IsZero() && now.Sub(f.checked) < f.cfg.CheckEvery {
 		return Prompt{}, 0, 0, 0, false
 	}
-	for _, c := range f.cards {
-		if c.write {
-			return Prompt{}, 0, 0, 0, false
-		}
+	if f.pending() {
+		return Prompt{}, 0, 0, 0, false
 	}
 	f.newFact = false
 	f.records = slices.DeleteFunc(f.records, func(r record) bool { return now.Sub(r.at) >= f.cfg.Recall })
@@ -1013,10 +1210,19 @@ func (f *follow) abandonAnswer(now time.Time) (n int) {
 		return 0
 	}
 	n, f.answering = f.answering, 0
-	if c := f.card(n); c != nil {
+	if c := f.card(n); c != nil && c.early {
+		f.dropEarly()
+	} else if c != nil {
 		c.done, c.note = true, fmt.Sprintf("On the Record didn't answer within %s.", f.cfg.Timeout)
 	}
 	return n
+}
+
+// pending says whether a card, shown or asked early, waits for its
+// answer: the writer and the decision model leave the Mac's GPU to it
+// meanwhile.
+func (f *follow) pending() bool {
+	return slices.ContainsFunc(f.cards, func(c *card) bool { return !c.done })
 }
 
 func (f *follow) card(n int) *card {
@@ -1026,4 +1232,48 @@ func (f *follow) card(n int) *card {
 		}
 	}
 	return nil
+}
+
+// timing is how long the steps of a card's answer took, for the
+// diagnostic log: from its question's last word to now, as it shows.
+func (f *follow) timing(c *card, now time.Time) string {
+	parts := []string{"noticed " + after(c.noticed, c.q.said) + " after it"}
+	switch {
+	case c.rewordAsked.IsZero():
+		parts = append(parts, "not reworded")
+	case c.rewordCame.IsZero():
+		parts = append(parts, "not reworded in time")
+	default:
+		parts = append(parts, "reworded in "+after(c.rewordCame, c.rewordAsked))
+	}
+	if !c.asked.IsZero() && !c.fetched.IsZero() {
+		fetch := "On the Record answered in " + after(c.fetched, c.asked)
+		if c.asked.Before(c.noticed) {
+			fetch += ", asked " + after(c.noticed, c.asked) + " before the question was finished"
+		}
+		parts = append(parts, fetch)
+	}
+	if !c.writeAsked.IsZero() {
+		parts = append(parts, "written in "+after(now, c.writeAsked))
+	}
+	return fmt.Sprintf("card %d shown %s after its question's last word: %s", c.n, after(now, c.q.said), strings.Join(parts, ", "))
+}
+
+// after says how long after since now is, in seconds, or that it isn't
+// known.
+func after(now, since time.Time) string {
+	if since.IsZero() || now.IsZero() {
+		return "an unknown time"
+	}
+	return fmt.Sprintf("%.1f s", now.Sub(since).Seconds())
+}
+
+// briefTokens is about how many tokens all of a brief's lines take, as the
+// writer is given them.
+func briefTokens(b Brief) int {
+	n := 0
+	for i, p := range b.Points {
+		n += tokens(numbered(i+1, p))
+	}
+	return n
 }

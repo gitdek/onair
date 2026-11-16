@@ -93,7 +93,7 @@ func TestItAsksGatherContextInPlainWordsAndNeverForTheScreen(t *testing.T) {
 	d.mu.Lock()
 	args := d.gathered[0]
 	d.mu.Unlock()
-	want := map[string]any{"topic": "how much cash does Halcyon need in screen person priya priya round on 2026?", "max_items": float64(8), "include_transcript": false, "include_screen": false}
+	want := map[string]any{"topic": "how much cash does Halcyon need in screen person priya priya round on 2026?", "max_items": float64(12), "include_transcript": false, "include_screen": false}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("asked %v", args)
 	}

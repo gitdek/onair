@@ -97,8 +97,8 @@ One Go app in two layers, and only one of them makes decisions.
   - [ ] The milestone's hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand), among them a 60-minute call, a power loss, a full disk and a broken join.
 - [ ] **Milestone two.**
 - [ ] **Milestone three.**
-  - [ ] A first, experimental live panel ([#18](https://github.com/gitdek/onair/issues/18)): speech recognized on the Mac, On the Record asked at its read-only door on the Mac, its strongest links shown beside the call, and an answer to a question asked in the call, written on the Mac from its notes and citing them. Built, and tried once on a Mac, where it heard almost nothing: only one recognition runs at a time, so it now recognizes the two sounds as one, which waits for its next try.
-  - [ ] Two local models on the Mac: d1-2B's typed questions about the call, a decision and where it stands and a change of topic; and Qwen3 4B, which writes each answer from the archive's lines and checks what is said against them, with Go checking its citations and quotes before anything shows. Built, and waiting for its first try on a call.
+  - [ ] A first, experimental live panel ([#18](https://github.com/gitdek/onair/issues/18)): speech recognized on the Mac, On the Record asked at its read-only door on the Mac, its strongest links shown beside the call, and a card for each question asked in the call, which shows about a second after the question ends, looked up while it is still being asked, and answered on the Mac from the archive's notes, citing them. Built, and tried once on a Mac, where it heard almost nothing: only one recognition runs at a time, so it now recognizes the two sounds as one, which waits for its next try.
+  - [ ] Two local models on the Mac: d1-2B's typed questions about the call, a decision and where it stands and a change of topic; and Qwen3 4B, which rewords each question for the archive's search, writes each answer from the archive's lines and checks what is said against them, with Go checking its citations and quotes before anything shows. Built, and waiting for its first try on a call.
 
 ## Working here
 

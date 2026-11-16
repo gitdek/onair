@@ -325,6 +325,11 @@ func TestTheWriterWaitsForItsModelAndWrites(t *testing.T) {
 	if _, err := slow.Write(ctx, live.Prompt{User: "x"}); !errors.Is(err, live.ErrLoading) {
 		t.Fatalf("a writer still loading gave %v", err)
 	}
+	// A quick prompt doesn't wait for it.
+	began := time.Now()
+	if _, err := slow.Write(context.Background(), live.Prompt{User: "x", Quick: true}); !errors.Is(err, live.ErrLoading) || time.Since(began) > 2*time.Second {
+		t.Fatalf("a quick prompt to a writer still loading gave %v after %v", err, time.Since(began))
+	}
 	// One that can't load says why.
 	broken := fakedWriter("fails to load")
 	defer broken.Close()

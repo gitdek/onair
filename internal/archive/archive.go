@@ -45,8 +45,9 @@ const (
 	maxTopic  = 2000    // characters of a topic, gather_context's own limit
 	// briefItems is how many passages of the notes a brief is asked for:
 	// enough to hold an answer, and few enough that the archive answers in
-	// about two seconds.
-	briefItems = 8
+	// a few seconds. Eight gave the local model 1,300 to 1,600 tokens of
+	// lines in a call, and twelve give it about the 2,500 it reads.
+	briefItems = 12
 )
 
 // Client asks On the Record. Several goroutines may use it at once.

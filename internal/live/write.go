@@ -22,8 +22,13 @@ import (
 // what was asked or said.
 const (
 	answerSystem = "You answer a question asked in a meeting from notes of earlier meetings. Use only the numbered notes you are given. " +
-		"Write one or two short sentences that answer the question, and after each fact put the number of the note it comes from in square brackets, like [3]. " +
+		"Write one or two short sentences, 40 words at most, that answer the question, naming the items of a list briefly, and after each fact put the number of the note it comes from in square brackets, like [3]. " +
+		"Notes may use other words for what is asked, such as capabilities or plans for features. " +
 		"Don't add anything the notes don't say. If the notes don't answer the question, write exactly: Not in the archive"
+	rewordSystem = "You help search the notes of earlier meetings for what a question asked in a meeting is about. " +
+		"Reply with one line: other words the notes may use for the things it asks about, separated by commas, at most 8, and nothing else. " +
+		"For a question about features, say: capabilities, roadmap, plans, improvements, new version. " +
+		"For one about money: funding, round, investors, raise."
 	checkSystem = "You check what was just said in a meeting against notes of earlier meetings. " +
 		"Look for a statement that contradicts a note about the same thing: a different number, amount, date, name or decision. " +
 		"Something the notes don't mention isn't a difference, and neither is a statement that agrees with a note, or rounds or approximates what it says: " +
@@ -39,6 +44,8 @@ const (
 	answerTokens = 120 // the model may write for an answer
 	answerMost   = 300 // characters of an answer shown, at most; a longer one is rejected
 	checkTokens  = 160 // the model may write for a check
+	rewordTokens = 40  // the model may write for a question's other words
+	rewordMost   = 8   // of its words added to a question, at most
 	checkSaid    = 8   // statements a check gives, the newest
 	checkRecords = 12  // and records, the most related
 	checkMost    = 900 // tokens of records a check gives, about
@@ -94,9 +101,11 @@ func numbered(n int, p Point) string {
 
 // passages are the lines of a brief the model answers a question from:
 // each line with text that a browser can open, the same line once, ranked
-// by relevance, the cheap first ranking, and else in the brief's order, up
-// to about budget tokens. A line that shares no word with the question is
-// given too, below those that do: the answer often shares none.
+// by rank, the cheap first ranking, which counts the writer's other words
+// for the question's and what a line sits under, and else in the brief's
+// order, up to about budget tokens. A line that shares no word with the
+// question is given too, below those that do: the answer often shares
+// none.
 func passages(q question, b Brief, budget int) []Point {
 	type scored struct {
 		p Point
@@ -110,7 +119,7 @@ func passages(q question, b Brief, budget int) []Point {
 			continue
 		}
 		seen[key] = true
-		all = append(all, scored{p, q.relevance(p)})
+		all = append(all, scored{p, q.rank(p)})
 	}
 	slices.SortStableFunc(all, func(a, b scored) int { return cmp.Compare(b.r, a.r) })
 	var out []Point
@@ -139,6 +148,46 @@ func answerPrompt(q question, from []Point) Prompt {
 	}
 	b.WriteString("\nQuestion: " + asked)
 	return Prompt{System: answerSystem, User: b.String(), Most: answerTokens}
+}
+
+// rewordPrompt asks the model for other words for what a question asks
+// about, for searching the notes with. It is asked not to wait for the
+// model to load: a question goes as heard rather than late.
+func rewordPrompt(q question) Prompt {
+	asked := q.shown
+	if !strings.HasSuffix(asked, "?") {
+		asked = "What do the notes say about " + strings.TrimRight(q.topic, ".,;:!?…") + "?"
+	}
+	return Prompt{System: rewordSystem, User: "Question: " + asked, Most: rewordTokens, Quick: true}
+}
+
+// readReword reads the model's other words for a question: of the first
+// line it wrote, the words that aren't too common, aren't the question's
+// own, and are plain words or numbers of 3 to 24 letters, once each,
+// rewordMost at most. Each counts as one key word.
+func readReword(text string, q question) []key {
+	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	own := map[string]bool{}
+	for _, w := range strings.Fields(q.topic) {
+		own[stem(bare(w))] = true
+	}
+	var out []key
+	for _, w := range strings.FieldsFunc(first, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' && r != '’' && r != '-'
+	}) {
+		b := strings.Trim(bare(w), "'-")
+		if len(b) < 3 || stop[b] || utf8.RuneCountInString(b) > 24 {
+			continue
+		}
+		if s := stem(b); !own[s] {
+			own[s] = true
+			out = append(out, key{stem: s, weight: 1, word: b})
+		}
+		if len(out) == rewordMost {
+			break
+		}
+	}
+	return out
 }
 
 var (
