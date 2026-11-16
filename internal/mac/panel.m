@@ -80,13 +80,37 @@ NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *>
         y += 6;
         y += OALabel(content, said, [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], NSColor.labelColor, margin, y, inner, 2);
     }
-    // Answer cards: a question as heard, then each line of its answer,
-    // indented, with where it was said under it, and a click opens that
-    // moment; or a word on it.
+    // What was said that differs from the record, with where the record
+    // says it, and a click opens that moment. Then answer cards: a
+    // question as heard, then its written answer and each of its sources,
+    // or each line of its answer with where it was said under it,
+    // indented, and a click opens that moment; or a word on it.
     CGFloat indent = 10, lineWidth = inner - indent;
     for (NSDictionary<NSString *, NSString *> *row in answers) {
         NSString *kind = row[@"kind"] ?: @"";
-        if ([kind isEqualToString:@"question"]) {
+        if ([kind isEqualToString:@"differs"]) {
+            y += gap;
+            OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin, y, inner, 10)];
+            view.url = OAOpenable(row[@"link"]);
+            view.toolTip = view.url.absoluteString;
+            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.systemOrangeColor, 0, 0, inner, 5) + 1;
+            h += OALabel(view, row[@"where"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, h, inner, 1);
+            view.frame = NSMakeRect(margin, y, inner, h);
+            [content addSubview:view];
+            y += h;
+        } else if ([kind isEqualToString:@"answer"]) {
+            y += 4;
+            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12], NSColor.labelColor, margin + indent, y, lineWidth, 6);
+        } else if ([kind isEqualToString:@"source"]) {
+            y += 2;
+            OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin + indent, y, lineWidth, 10)];
+            view.url = OAOpenable(row[@"link"]);
+            view.toolTip = view.url.absoluteString;
+            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, 0, lineWidth, 1);
+            view.frame = NSMakeRect(margin + indent, y, lineWidth, h);
+            [content addSubview:view];
+            y += h;
+        } else if ([kind isEqualToString:@"question"]) {
             y += gap;
             y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.labelColor, margin, y, inner, 2);
         } else if ([kind isEqualToString:@"line"]) {

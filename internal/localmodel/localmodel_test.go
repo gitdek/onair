@@ -37,6 +37,8 @@ func fake(mode string) int {
 		return 139
 	case "never loads":
 		time.Sleep(time.Hour)
+	case "loads slowly":
+		time.Sleep(300 * time.Millisecond)
 	}
 	fmt.Println("Fetching 9 files: 100%") // a library, printing before the model loads
 	say(map[string]any{"ready": true, "load_ms": 5})
@@ -47,8 +49,17 @@ func fake(mode string) int {
 			ID        int64          `json:"id"`
 			State     string         `json:"state"`
 			Questions map[string]any `json:"questions"`
+			System    string         `json:"system"`
+			User      string         `json:"user"`
+			Most      int            `json:"most"`
 		}
 		json.Unmarshal(in.Bytes(), &req)
+		if req.User != "" {
+			// A writer's prompt: it writes back what it was asked.
+			say(map[string]any{"id": req.ID - 1, "text": "an answer to an earlier prompt"})
+			say(map[string]any{"id": req.ID, "text": fmt.Sprintf("%d tokens on %q, told %q", req.Most, req.User, req.System), "ms": 3})
+			continue
+		}
 		switch mode {
 		case "slow":
 			time.Sleep(300 * time.Millisecond)
@@ -121,13 +132,8 @@ func TestItAsksTheHelperAndReadsItsVerdict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Decision != 0.9 || v.Topic != 0.1 || v.Stance["agreed"] != 0.8 || !v.Compared || v.Differs != 0.8 {
+	if v.Decision != 0.9 || v.Topic != 0.1 || v.Stance["agreed"] != 0.8 {
 		t.Fatalf("read %+v", v)
-	}
-	// Without a record, nothing is compared.
-	v, err = m.Judge(context.Background(), live.Round{Text: "words"})
-	if err != nil || v.Compared {
-		t.Fatalf("without a record: %+v, %v", v, err)
 	}
 }
 
@@ -274,37 +280,80 @@ func TestCloseStopsTheHelper(t *testing.T) {
 }
 
 func TestTheQuestionsARoundAsks(t *testing.T) {
-	q := questions(round)
-	if len(q) != 4 || !strings.Contains(fmt.Sprint(q["differs"]), "Demo planning, 2026-11-03. 12:31 “Tuesday works”") {
+	// Whether what is said differs from a record is the writer's to
+	// check, with the record's words, not d1's.
+	if q := questions(round); len(q) != 3 || q["differs"] != nil || q["decision"] == nil || q["stance"] == nil || q["topic_changed"] == nil {
 		t.Fatalf("asked %v", q)
 	}
-	if q := questions(live.Round{Text: "words"}); len(q) != 3 || q["differs"] != nil {
-		t.Fatalf("without a record asked %v", q)
-	}
-	if _, err := verdict(map[string]json.RawMessage{"decision": json.RawMessage(`{"noul": 0.5}`)}, false); err == nil {
+	if _, err := verdict(map[string]json.RawMessage{"decision": json.RawMessage(`{"noul": 0.5}`)}); err == nil {
 		t.Fatal("a verdict missing answers was read")
 	}
 	v, err := verdict(map[string]json.RawMessage{
 		"decision":      json.RawMessage(`{"noul": 1.4}`),
 		"topic_changed": json.RawMessage(`{"noul": -0.2}`),
 		"stance":        json.RawMessage(`{"probabilities": {"agreed": 0.6}}`),
-		"differs":       json.RawMessage(`{"score": 2}`),
-	}, true)
-	if err != nil || v.Decision != 1 || v.Topic != 0 || v.Differs != 1 || !v.Compared {
+	})
+	if err != nil || v.Decision != 1 || v.Topic != 0 || v.Stance["agreed"] != 0.6 {
 		t.Fatalf("read %+v, %v", v, err)
 	}
 }
 
+// fakedWriter is a writer whose helper is the fake, behaving as mode says.
+func fakedWriter(mode string) *Writer {
+	w := NewWriter("unused")
+	w.argv = []string{os.Args[0], "-test.run=^$"}
+	w.env = append(w.env, "ONAIR_FAKE_HELPER="+mode)
+	return w
+}
+
+func TestTheWriterWaitsForItsModelAndWrites(t *testing.T) {
+	w := fakedWriter("loads slowly")
+	defer w.Close()
+	// Told to warm, it starts loading before it is asked.
+	w.Warm()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	text, err := w.Write(ctx, live.Prompt{System: "Be brief.", User: "Notes: [1] made up", Most: 7})
+	if err != nil || text != `7 tokens on "Notes: [1] made up", told "Be brief."` {
+		t.Fatalf("wrote %q, %v", text, err)
+	}
+	// One whose model doesn't load in time says it is still loading.
+	slow := fakedWriter("never loads")
+	defer slow.Close()
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := slow.Write(ctx, live.Prompt{User: "x"}); !errors.Is(err, live.ErrLoading) {
+		t.Fatalf("a writer still loading gave %v", err)
+	}
+	// One that can't load says why.
+	broken := fakedWriter("fails to load")
+	defer broken.Close()
+	if _, err := broken.Write(context.Background(), live.Prompt{User: "x"}); err == nil || !strings.Contains(err.Error(), "no snapshot of the model in the cache") {
+		t.Fatalf("a writer that can't load gave %v", err)
+	}
+}
+
 func TestTheHelperRunsOfflineAndRefusesCode(t *testing.T) {
-	for _, want := range []string{`"snapshots", REVISION`, `os.environ["HF_HUB_OFFLINE"] = "1"`, `endswith(".py")`, REVISIONLine} {
-		if !strings.Contains(helper, want) {
-			t.Fatalf("the helper doesn't hold %q", want)
+	for script, pinned := range map[string]string{judgeHelper: REVISIONLine, writerHelper: writerREVISIONLine} {
+		for _, want := range []string{`"snapshots", REVISION`, `os.environ["HF_HUB_OFFLINE"] = "1"`, `endswith(".py")`, pinned} {
+			if !strings.Contains(script, want) {
+				t.Fatalf("a helper doesn't hold %q", want)
+			}
 		}
+	}
+	if !strings.Contains(writerHelper, "trust_remote_code=False") || strings.Contains(writerHelper, "trust_remote_code=True") {
+		t.Fatal("the writer may run the model repository's code")
 	}
 	if m := New("/x/python"); m.argv[1] != "-I" || !strings.Contains(strings.Join(m.env, " "), "HF_HUB_OFFLINE=1") {
 		t.Fatalf("the helper runs as %v with %v", m.argv[:2], m.env)
 	}
+	if w := NewWriter("/x/python"); w.argv[1] != "-I" || w.argv[3] != writerHelper || !strings.Contains(strings.Join(w.env, " "), "HF_HUB_OFFLINE=1") {
+		t.Fatalf("the writer runs as %v with %v", w.argv[:2], w.env)
+	}
 }
+
+// writerREVISIONLine pins the writing model's revision.
+const writerREVISIONLine = `REVISION = "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b"`
 
 // REVISIONLine pins the model's revision.
 const REVISIONLine = `REVISION = "3247d0483b11e5da31fa10e7979c23252fbe3580"`

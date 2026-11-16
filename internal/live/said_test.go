@@ -102,7 +102,7 @@ func TestTheLogCountsAResultWithoutItsWords(t *testing.T) {
 func TestTheControllerHearsEachTurnOfAResult(t *testing.T) {
 	screen := &fakeScreen{}
 	archive := &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}
-	c := Start(fast, archive, screen, time.Now, nil)
+	c := Start(fast, archive, screen, time.Now, nil, nil)
 	c.Enabled(true)
 	c.Capturing("", true)
 	c.Recording(true)

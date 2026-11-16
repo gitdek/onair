@@ -27,11 +27,7 @@ type Verdict struct {
 	// Stance is where that decision stands: "proposed", "agreed", "taken
 	// back" or "none".
 	Stance map[string]float64
-	// Differs is how far what is said differs from the first record, from
-	// 0, the same, to 1, contradicting it, when Compared.
-	Differs  float64
-	Compared bool
-	Topic    float64 // that the topic changed
+	Topic  float64 // that the topic changed
 }
 
 // Thresholds are what a verdict must clear to show in the panel. They are
@@ -40,9 +36,8 @@ type Verdict struct {
 var Thresholds = struct {
 	Decision float64 // that a decision is being made
 	Stance   float64 // that it stands where the panel says
-	Differs  float64 // how far it differs from the record
 	Topic    float64 // that the topic changed, which clears the panel
-}{Decision: 0.7, Stance: 0.5, Differs: 0.7, Topic: 0.8}
+}{Decision: 0.7, Stance: 0.5, Topic: 0.8}
 
 // Stances a decision can be in, as the panel says them.
 var stances = map[string]string{"proposed": "proposed", "agreed": "agreed", "taken back": "taken back"}
@@ -50,14 +45,15 @@ var stances = map[string]string{"proposed": "proposed", "agreed": "agreed", "tak
 // call is what a judge said that cleared a threshold, as the panel shows
 // it.
 type call struct {
-	kind string // "decision" or "differs"
+	kind string // "decision"
 	text string
 	at   time.Time
 }
 
-// verdictCalls is what a verdict says that clears the thresholds, given
-// the records it was asked about.
-func verdictCalls(v Verdict, records []Link, now time.Time) []call {
+// verdictCalls is what a verdict says that clears the thresholds. Whether
+// what is said differs from the record is the Writer's to check, with the
+// record's own words, not a judge's.
+func verdictCalls(v Verdict, now time.Time) []call {
 	var calls []call
 	if v.Decision >= Thresholds.Decision {
 		best, p := "", 0.0
@@ -69,14 +65,6 @@ func verdictCalls(v Verdict, records []Link, now time.Time) []call {
 		if best != "" && p >= Thresholds.Stance {
 			calls = append(calls, call{kind: "decision", text: fmt.Sprintf("Decision: %s, at %s.", stances[best], now.Format("15:04")), at: now})
 		}
-	}
-	if v.Compared && v.Differs >= Thresholds.Differs && len(records) > 0 {
-		r := records[0]
-		what := r.Title
-		if r.Date != "" {
-			what += " (" + r.Date + ")"
-		}
-		calls = append(calls, call{kind: "differs", text: "Differs from: " + what + ".", at: now})
 	}
 	return calls
 }

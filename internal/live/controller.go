@@ -53,6 +53,18 @@ type Controller struct {
 
 	replies   chan reply
 	answering atomic.Int32 // questions of answer cards not yet returned
+
+	writers  map[string]Writer
+	writings chan writing
+	writes   atomic.Int32 // answers and checks the writer hasn't returned
+}
+
+// writing is what the writer wrote: an answer for a card, or a check.
+type writing struct {
+	card, check int
+	text        string
+	err         error
+	took        time.Duration
 }
 
 type reply struct {
@@ -83,10 +95,12 @@ type answer struct {
 
 // Start starts a controller with the numbers in cfg. A nil archive answers
 // every question with an error. Judges are the judges that can be chosen,
-// by name.
-func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge) *Controller {
-	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges,
-		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1), replies: make(chan reply, inFlight+1)}
+// by name, and writers the writers that go with them: choosing a name
+// chooses both.
+func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge, writers map[string]Writer) *Controller {
+	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges, writers: writers,
+		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1), replies: make(chan reply, inFlight+1),
+		writings: make(chan writing, inFlight+1)}
 	go c.run()
 	return c
 }
@@ -198,6 +212,7 @@ func (c *Controller) run() {
 		var got *answer
 		var judged *verdict
 		var replied *reply
+		var wrote *writing
 		select {
 		case <-c.wake:
 		case <-t.C:
@@ -207,8 +222,10 @@ func (c *Controller) run() {
 			judged = &v
 		case r := <-c.replies:
 			replied = &r
+		case w := <-c.writings:
+			wrote = &w
 		}
-		err := c.step(f, got, judged, replied, s)
+		err := c.step(f, got, judged, replied, wrote, s)
 		if err == nil {
 			continue
 		}
@@ -220,6 +237,9 @@ func (c *Controller) run() {
 		if s.judge != nil {
 			c.safely(s.judge.Close)
 		}
+		if s.writer != nil {
+			c.safely(s.writer.Close)
+		}
 		c.safely(func() { c.screen.Listen(false, c.cfg.Chunk) })
 		c.safely(func() {
 			c.screen.Show(Panel{Visible: f.on && f.recording, Display: f.display, Status: "Live Context stopped after an error, and recording carries on: " + sentence(err.Error())})
@@ -228,16 +248,18 @@ func (c *Controller) run() {
 	}
 }
 
-// sent is what the Mac was last told, and the judge in use.
+// sent is what the Mac was last told, and the judge and writer in use.
 type sent struct {
 	listening bool
 	panel     Panel
 	shown     bool
 	judge     Judge
+	writer    Writer
+	warmed    bool   // they were told to load their models, for this time listening
 	shows     string // what the diagnostic log last said the panel shows
 }
 
-func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *reply, s *sent) (err error) {
+func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *reply, wrote *writing, s *sent) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
@@ -275,6 +297,7 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 	for _, said := range append(f.said(sentences), f.flush(now)...) {
 		q, ok := notice(said)
 		if !ok {
+			f.state(said)
 			continue
 		}
 		who := map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who]
@@ -286,7 +309,7 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		}
 	}
 	if replied != nil {
-		shown, taken := f.reply(replied.card, replied.brief, replied.err)
+		shown, taken, write := f.reply(replied.card, replied.brief, replied.err, now)
 		meetings := map[string]bool{}
 		for _, p := range replied.brief.Points {
 			meetings[p.Meeting+"\x00"+p.Date] = true
@@ -296,6 +319,9 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.log("answer %d came back after %s, too late to be taken", replied.card, replied.took.Round(time.Millisecond))
 		case replied.err != nil:
 			c.log("answer %d failed after %s: %s", replied.card, replied.took.Round(time.Millisecond), brief(replied.err))
+		case write:
+			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages; for the local model to write",
+				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages)
 		default:
 			c.log("answer %d came back in %s: %d lines from %d meetings, %d passages; %d shown; so far %d asked and %d lines shown",
 				replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), len(meetings), replied.brief.Passages, shown, f.answers, f.lines)
@@ -322,26 +348,48 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.log("ask %d given up on after %s", waiting, now.Sub(f.asked).Round(time.Millisecond))
 		}
 	}
-	// A judge runs only while chosen with Live Context on, and one that
-	// is no longer wanted is stopped.
-	judge := c.judges[name]
+	// A judge and its writer run only while chosen with Live Context on,
+	// and one that is no longer wanted is stopped. They start loading
+	// their models as listening starts, so the first round and the first
+	// answer don't find them loading.
+	judge, writer := c.judges[name], c.writers[name]
 	if !on {
-		judge = nil
+		judge, writer = nil, nil
 	}
 	if judge != s.judge {
 		if s.judge != nil {
 			old := s.judge
 			go c.safely(old.Close)
 		}
-		s.judge = judge
+		s.judge, s.warmed = judge, false
+	}
+	if writer != s.writer {
+		if s.writer != nil {
+			old := s.writer
+			go c.safely(old.Close)
+		}
+		s.writer, s.warmed = writer, false
 	}
 	f.judge(judge != nil)
+	f.writes(writer != nil)
+	if !f.listening() {
+		s.warmed = false
+	} else if !s.warmed {
+		s.warmed = true
+		for _, m := range []any{judge, writer} {
+			if w, ok := m.(Warmer); ok {
+				go c.safely(w.Warm)
+			}
+		}
+	}
 	if judged != nil {
 		taken := judged.round != 0 && judged.round == f.inRound
 		f.judgement(judged.round, judged.records, judged.v, judged.err, now)
 		switch {
 		case !taken:
 			c.log("round %d came back too late to be taken", judged.round)
+		case errors.Is(judged.err, ErrLoading):
+			c.log("round %d waits: the local model is loading", judged.round)
 		case judged.err != nil:
 			c.log("round %d failed: %s", judged.round, brief(judged.err))
 		case judged.v.Topic >= Thresholds.Topic:
@@ -350,7 +398,20 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.log("round %d judged: decision %.2f, topic changed %.2f", judged.round, judged.v.Decision, judged.v.Topic)
 		}
 	}
-	f.abandonRound(now)
+	if waiting := f.inRound; waiting != 0 {
+		if f.abandonRound(now); f.inRound == 0 {
+			c.log("round %d given up on after %s", waiting, now.Sub(f.judged).Round(time.Millisecond))
+		}
+	}
+	if wrote != nil {
+		c.wrote(f, wrote, now)
+	}
+	if n := f.abandonWrite(now); n != 0 {
+		c.log("write %d given up on after %s", n, now.Sub(f.writeAsked).Round(time.Millisecond))
+	}
+	if n := f.abandonCheck(now); n != 0 {
+		c.log("check %d given up on after %s", n, now.Sub(f.checked).Round(time.Millisecond))
+	}
 	if listening := f.listening(); listening != s.listening {
 		c.log("listen %t", listening)
 		c.screen.Listen(listening, c.cfg.Chunk)
@@ -366,6 +427,15 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		if topic, n, ok := f.answerDue(now); ok {
 			c.log("answer %d asked, %d words", n, len(strings.Fields(topic)))
 			c.answer(topic, n)
+		}
+	}
+	if writer != nil && c.writes.Load() < inFlight {
+		if p, n, ok := f.writeDue(now); ok {
+			c.log("write %d asked: %d passages, about %d tokens", n, strings.Count(p.User, "\n["), tokens(p.System+p.User))
+			c.write(writer, p, writing{card: n})
+		} else if p, n, said, records, ok := f.checkDue(now); ok {
+			c.log("check %d asked: %d statements, %d records, about %d tokens", n, said, records, tokens(p.System+p.User))
+			c.write(writer, p, writing{check: n})
 		}
 	}
 	if judge != nil && c.judging.Load() < inFlight {
@@ -470,6 +540,61 @@ func (c *Controller) round(judge Judge, r Round, round int) {
 		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.JudgeTimeout)
 		defer cancel()
 		v.v, v.err = judge.Judge(ctx, r)
+	}()
+}
+
+// wrote takes what the writer wrote, and logs what came of it, in counts
+// and On Air's own words: never what was asked or written.
+func (c *Controller) wrote(f *follow, w *writing, now time.Time) {
+	took := w.took.Round(time.Millisecond)
+	if w.card != 0 {
+		o, why, taken := f.answerWritten(w.card, w.text, w.err)
+		var came string
+		switch {
+		case !taken:
+			c.log("write %d came back after %s, too late to be taken", w.card, took)
+			return
+		case w.err != nil:
+			came = "failed: " + brief(w.err)
+		case o == answered:
+			came = fmt.Sprintf("answered, citing %s", plural(len(f.card(w.card).sources), "source"))
+		case o == notInArchive:
+			came = "not in the archive"
+		default:
+			came = "rejected: " + why
+		}
+		c.log("write %d came back in %s: %s; so far %d written, %d answered, %d not in the archive, %d rejected",
+			w.card, took, came, f.written, f.answeredN, f.notIn, f.rejectedN)
+		return
+	}
+	result, taken := f.checkedBy(w.check, w.text, w.err, now)
+	if !taken {
+		c.log("check %d came back after %s, too late to be taken", w.check, took)
+		return
+	}
+	c.log("check %d came back in %s: %s; so far %d checked, %d differ, %d rejected", w.check, took, result, f.checksBack, f.found, f.checkRejected)
+}
+
+// write asks the writer on a goroutine of its own, for at most
+// c.cfg.WriteTimeout, and hands what it wrote back to run, as ask does.
+func (c *Controller) write(writer Writer, p Prompt, w writing) {
+	c.writes.Add(1)
+	go func() {
+		began := c.now()
+		defer func() {
+			if r := recover(); r != nil {
+				w.text, w.err = "", fmt.Errorf("the local model failed: %v", r)
+			}
+			w.took = c.now().Sub(began)
+			c.writes.Add(-1)
+			select {
+			case c.writings <- w:
+			default:
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.WriteTimeout)
+		defer cancel()
+		w.text, w.err = writer.Write(ctx, p)
 	}()
 }
 

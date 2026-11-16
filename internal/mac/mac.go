@@ -453,10 +453,13 @@ func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chu
 // Link is a link the live panel shows.
 type Link struct{ Kind, Title, Date, Why, URL string }
 
-// Answer is an answer card the live panel shows: a question as heard, the
-// lines that answer it, and a word on it.
+// Answer is an answer card the live panel shows: a question as heard, an
+// answer written for it and its sources, or the lines that answer it, and
+// a word on it.
 type Answer struct {
 	Question string
+	Text     string
+	Sources  []AnswerLine
 	Lines    []AnswerLine
 	Note     string
 }
@@ -467,9 +470,10 @@ type AnswerLine struct{ Text, Where, URL string }
 
 // ShowPanel sets what the live panel shows, beside a display named as
 // Display.ID names it, or the main one when empty: a line under its title,
-// a status line, what a model said, a line each, answer cards and links.
+// a status line, what a model said, a line each, what was said that
+// differs from the record, when its Text is set, answer cards and links.
 // It hides the panel when visible is false, and returns at once.
-func ShowPanel(visible bool, display, headline, status string, calls []string, answers []Answer, links []Link) {
+func ShowPanel(visible bool, display, headline, status string, calls []string, differs AnswerLine, answers []Answer, links []Link) {
 	n := len(links)
 	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
 	defer C.free(unsafe.Pointer(list))
@@ -488,10 +492,21 @@ func ShowPanel(visible bool, display, headline, status string, calls []string, a
 	for i, l := range links {
 		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
 	}
-	// Each card goes as rows: its question, its lines, and its word.
+	// A difference from the record goes first, as a row of its own. Each
+	// card goes as rows: its question, its answer and sources, or its
+	// lines, and its word.
 	var rows []C.onair_answer
+	if differs.Text != "" {
+		rows = append(rows, C.onair_answer{kind: str("differs"), text: str(differs.Text), where: str(differs.Where), link: str(differs.URL)})
+	}
 	for _, a := range answers {
 		rows = append(rows, C.onair_answer{kind: str("question"), text: str(a.Question), where: str(""), link: str("")})
+		if a.Text != "" {
+			rows = append(rows, C.onair_answer{kind: str("answer"), text: str(a.Text), where: str(""), link: str("")})
+		}
+		for _, l := range a.Sources {
+			rows = append(rows, C.onair_answer{kind: str("source"), text: str(l.Text), where: str(""), link: str(l.URL)})
+		}
 		for _, l := range a.Lines {
 			rows = append(rows, C.onair_answer{kind: str("line"), text: str(l.Text), where: str(l.Where), link: str(l.URL)})
 		}

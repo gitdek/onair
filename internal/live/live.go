@@ -13,6 +13,7 @@ package live
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -104,6 +105,35 @@ type Archive interface {
 	Answer(ctx context.Context, question string, transcript bool) (Brief, error)
 }
 
+// Writer writes a little text for a prompt: a small language model on
+// this Mac. Plain Go decides what it is asked and checks what it writes
+// before any of it is shown.
+type Writer interface {
+	// Write answers a prompt. It returns once ctx is done, if not before,
+	// and ErrLoading when its model hasn't loaded by then.
+	Write(ctx context.Context, p Prompt) (string, error)
+	// Close stops whatever runs the model, when it isn't wanted.
+	Close()
+}
+
+// Prompt is what a Writer is asked: what it is told to do, what it is
+// given and asked, and the most tokens it may write.
+type Prompt struct {
+	System, User string
+	Most         int
+}
+
+// ErrLoading says the local model is still loading, which takes a few
+// seconds after it starts. It is no failure: the next question may find it
+// loaded.
+var ErrLoading = errors.New("the local model is still loading")
+
+// Warmer is what a Judge or a Writer may also do: start loading its model
+// before it is first asked, as listening starts.
+type Warmer interface {
+	Warm()
+}
+
 // Screen is what the Mac does for the live side.
 type Screen interface {
 	// Ask asks whether On Air may recognize speech, which macOS asks the
@@ -140,6 +170,11 @@ type Panel struct {
 	// Calls are what a judge said that cleared its thresholds, newest
 	// first, such as "Decision: agreed, at 15:04."
 	Calls []string
+	// Differs is what was said that differs from the record, when the
+	// local model found something and it checked out: "Differs from the
+	// record: said “…”; the record says “…”", where the record says it,
+	// and the moment a click opens. It is empty otherwise.
+	Differs AnswerLine
 	// Answers are answer cards, newest first, above the links.
 	Answers []Answer
 	// Links are newest first.
@@ -147,13 +182,22 @@ type Panel struct {
 }
 
 // Answer is an answer card: a question asked in the call, or a topic
-// brought up, as heard, the lines of On the Record's notes that answer it,
-// best first, and a word on it when there are none, such as that it is
-// still being asked or that the archive has no answer.
+// brought up, as heard; the local model's answer, from On the Record's
+// notes, and its sources, when it wrote one that checks out, or else the
+// lines of the notes that share the question's words, best first; and a
+// word on it, such as that it is still being asked or that the archive
+// has no answer.
 type Answer struct {
 	Question string
-	Lines    []AnswerLine
-	Note     string
+	// Text is the model's answer, a sentence or two, each fact followed by
+	// the number of its source, such as "[1]".
+	Text string
+	// Sources are where Text comes from, in the order of their numbers,
+	// each such as "[1] Pricing review · 2026-11-03 · 12:31", and the
+	// moment a click opens.
+	Sources []AnswerLine
+	Lines   []AnswerLine
+	Note    string
 }
 
 // AnswerLine is a line of an answer: what was noted, short enough for a
@@ -235,6 +279,11 @@ type Config struct {
 	Cards      int           // answer cards on the panel at most
 	Again      time.Duration // how long a question asked isn't asked again
 	Transcript bool          // whether answers draw on the transcripts too, which takes the archive longer
+
+	AnswerTokens int           // tokens of a brief's lines the local model answers from, about
+	WriteTimeout time.Duration // how long it may take to write an answer, or to check what was said, loading included
+	CheckEvery   time.Duration // the least time between two checks of what was said against the record
+	Recall       time.Duration // how long the lines of a brief are kept to check what is said against
 }
 
 // Defaults are the numbers On Air runs with.
@@ -260,4 +309,12 @@ var Defaults = Config{
 	// with them, idle on the owner's Mac, and its other answers took up to
 	// 6 s during a call: without them an answer stays well inside Timeout.
 	Transcript: false,
+
+	// On the owner's Mac the local model answered from 1,100 tokens of
+	// made-up notes in 0.5 to 1.5 s, and checked what was said in 0.3 to
+	// 1.5 s, once loaded, which took 2 s.
+	AnswerTokens: 1500,
+	WriteTimeout: 8 * time.Second,
+	CheckEvery:   15 * time.Second,
+	Recall:       5 * time.Minute,
 }

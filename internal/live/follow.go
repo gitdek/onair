@@ -1,7 +1,9 @@
 package live
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,6 +43,27 @@ type follow struct {
 	news    bool      // something new was said since the last round
 	calls   []call    // what the judge said, newest first, one of each kind
 	verdict string    // what went wrong asking the judge, if anything
+	loading bool      // and it was only that the model is still loading
+
+	// The local model's writing, one answer or check at a time, and never
+	// while a round waits for the judge: they share this Mac's GPU.
+	writer     bool        // a writer is chosen
+	writing    int         // the card whose answer is being written, or 0
+	writeAsked time.Time   // when it was asked
+	wrote      string      // what went wrong asking the writer, if anything
+	statements []statement // what was said lately that states a fact, oldest first
+	newFact    bool        // something that states a fact was said since the last check
+	records    []record    // lines of briefs fetched lately that state a fact
+	checking   int         // the check waiting for the writer, or 0
+	checked    time.Time   // when the last check was asked
+	checks     int         // checks asked so far, which number them
+	check      checkAsked  // what the check waiting was asked about
+	differs    *differs    // what was said that differs from the record, while shown
+	differed   map[string]time.Time
+	// Counts for the diagnostic log: answers written, of them answered,
+	// not in the archive and rejected, and checks that came back, of them
+	// rejected and differences found.
+	written, answeredN, notIn, rejectedN, checksBack, checkRejected, found int
 
 	open        *utterance // the last utterance of a result, which the next may carry on
 	cards       []*card    // answer cards, newest first
@@ -61,7 +84,19 @@ type follow struct {
 }
 
 func newFollow(cfg Config) *follow {
-	return &follow{cfg: cfg, shown: map[string]time.Time{}}
+	return &follow{cfg: cfg, shown: map[string]time.Time{}, differed: map[string]time.Time{}}
+}
+
+// checkAsked is what a check asked the writer about.
+type checkAsked struct {
+	said    []statement
+	records []record
+}
+
+// differs is a difference from the record on the panel, and since when.
+type differs struct {
+	line AnswerLine
+	at   time.Time
 }
 
 // listening says whether speech should be recognized now.
@@ -75,6 +110,7 @@ func (f *follow) enable(on bool) (ask bool) {
 	f.on = on
 	if !on {
 		f.heard, f.fresh, f.news, f.calls, f.open = nil, false, false, nil, nil
+		f.statements, f.newFact, f.differs = nil, false, nil
 	}
 	return ask
 }
@@ -82,9 +118,25 @@ func (f *follow) enable(on bool) (ask bool) {
 // judge says whether a judge is chosen. Without one, what it said goes.
 func (f *follow) judge(on bool) {
 	if !on {
-		f.calls, f.verdict, f.inRound = nil, "", 0
+		f.calls, f.verdict, f.loading, f.inRound = nil, "", false, 0
 	}
 	f.judging = on
+}
+
+// writes says whether a writer is chosen. Without one, what is waiting to
+// be written shows the lines that share the question's words, and what it
+// found goes.
+func (f *follow) writes(on bool) {
+	if !on && f.writer {
+		for _, c := range f.cards {
+			if c.write || c.n == f.writing {
+				c.write = false
+				f.fallback(c)
+			}
+		}
+		f.writing, f.checking, f.check, f.wrote, f.differs = 0, 0, checkAsked{}, "", nil
+	}
+	f.writer = on
 }
 
 // capturing notes what capture was last asked to record: the display the
@@ -103,9 +155,11 @@ func (f *follow) record(on bool, now time.Time) {
 	case on && !f.recording:
 		f.heard, f.fresh, f.links = nil, false, nil
 		f.asking, f.asked, f.result, f.resultAt = 0, time.Time{}, "", time.Time{}
-		f.news, f.calls, f.inRound, f.judged, f.verdict = false, nil, 0, time.Time{}, ""
+		f.news, f.calls, f.inRound, f.judged, f.verdict, f.loading = false, nil, 0, time.Time{}, "", false
 		f.speech, f.transient, f.archive, f.answered, f.dropped = "", false, "", "", ""
 		f.open, f.cards, f.answering, f.lately = nil, nil, 0, nil
+		f.writing, f.wrote, f.statements, f.newFact, f.records = 0, "", nil, false, nil
+		f.checking, f.checked, f.check, f.differs = 0, time.Time{}, checkAsked{}, nil
 	case !on && f.recording:
 		f.stopped = now
 	}
@@ -258,7 +312,7 @@ func (f *follow) due(now time.Time) (text string, ask int, ok bool) {
 // f.cfg.JudgeEvery after it, when the window holds f.cfg.Least words, and
 // never while a round waits for its verdict.
 func (f *follow) roundDue(now time.Time) (Round, int, bool) {
-	if !f.listening() || !f.judging || f.inRound != 0 || !f.news {
+	if !f.listening() || !f.judging || f.inRound != 0 || !f.news || f.writing != 0 || f.checking != 0 {
 		return Round{}, 0, false
 	}
 	if !f.judged.IsZero() && now.Sub(f.judged) < f.cfg.JudgeEvery {
@@ -280,6 +334,13 @@ func (f *follow) judgement(round int, records []Link, v Verdict, err error, now 
 		return
 	}
 	f.inRound = 0
+	if errors.Is(err, ErrLoading) {
+		// Loading is no failure: the next round asks again, once
+		// something new is said, as this one would have.
+		f.verdict, f.loading, f.news = "The local model is loading.", true, true
+		return
+	}
+	f.loading = false
 	if err != nil {
 		f.verdict = "Couldn't ask the model: " + sentence(err.Error())
 		return
@@ -289,7 +350,7 @@ func (f *follow) judgement(round int, records []Link, v Verdict, err error, now 
 		f.links, f.calls, f.heard, f.fresh, f.news, f.answered = nil, nil, nil, false, false, ""
 		return
 	}
-	calls := verdictCalls(v, records, now)
+	calls := verdictCalls(v, now)
 	kept := append([]call(nil), calls...)
 	for _, old := range f.calls {
 		replaced := false
@@ -308,7 +369,7 @@ func (f *follow) abandonRound(now time.Time) {
 	if f.inRound == 0 || now.Sub(f.judged) <= f.cfg.JudgeTimeout+time.Second {
 		return
 	}
-	f.inRound = 0
+	f.inRound, f.loading = 0, false
 	f.verdict = fmt.Sprintf("Couldn't ask the model: it didn't answer within %s.", f.cfg.JudgeTimeout)
 }
 
@@ -391,11 +452,17 @@ func (f *follow) panel(now time.Time) Panel {
 	}
 	p.Headline = f.headline(now)
 	for _, c := range f.cards {
-		a := Answer{Question: c.q.shown, Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
-		if !c.done {
+		a := Answer{Question: c.q.shown, Text: c.text, Sources: append([]AnswerLine(nil), c.sources...), Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
+		switch {
+		case c.write || c.n == f.writing:
+			a.Lines, a.Note = nil, "Reading what On the Record found…"
+		case !c.done:
 			a.Note = "Looking in On the Record…"
 		}
 		p.Answers = append(p.Answers, a)
+	}
+	if f.differs != nil && now.Sub(f.differs.at) < f.cfg.Hold {
+		p.Differs = f.differs.line
 	}
 	for _, c := range f.calls {
 		if now.Sub(c.at) < f.cfg.Hold {
@@ -411,7 +478,7 @@ func (f *follow) panel(now time.Time) Panel {
 	if !f.leftOut {
 		lines = append(lines, "This recording started before Live Context was on, so the panel may be in it.")
 	}
-	lines = append(lines, f.archive, f.verdict, f.dropped)
+	lines = append(lines, f.archive, f.verdict, f.wrote, f.dropped)
 	if f.speech == "" || f.transient {
 		switch all, person := f.words(); {
 		case all == 0:
@@ -522,19 +589,25 @@ func (f *follow) shows(p Panel, now time.Time) string {
 	add(f.speech != "" && !f.transient && f.allowed == SpeechUnsupported, "speech unsupported")
 	add(!f.leftOut, "panel may be in the recording")
 	add(f.archive != "", "question failed")
-	add(f.verdict != "", "model failed")
+	add(f.verdict != "" && !f.loading, "model failed")
+	add(f.loading, "model loading")
+	add(f.wrote != "", "writing failed")
+	add(p.Differs.Text != "", "differs from the record")
 	add(f.dropped != "", "sound dropped")
 	add(f.answered != "", "nothing new")
 	if len(kinds) == 0 {
 		kinds = append(kinds, "listening")
 	}
 	person, others := f.recent(now)
-	lines := 0
+	lines, written := 0, 0
 	for _, a := range p.Answers {
 		lines += len(a.Lines)
+		if a.Text != "" {
+			written++
+		}
 	}
-	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s, %s with %s; status: %s",
-		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), plural(len(p.Answers), "answer card"), plural(lines, "line"), strings.Join(kinds, ", "))
+	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s, %s with %s, %d written; status: %s",
+		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), plural(len(p.Answers), "answer card"), plural(lines, "line"), written, strings.Join(kinds, ", "))
 }
 
 // sentence ends what another part said with a full stop, if it has none.
@@ -558,6 +631,13 @@ type card struct {
 	done  bool      // its answer came, or it was given up on
 	lines []AnswerLine
 	note  string
+	// For the writer: the lines of the brief it answers from, numbered
+	// from 1 in this order, whether it waits to be written, and the
+	// answer and its sources once written and checked.
+	from    []Point
+	write   bool
+	text    string
+	sources []AnswerLine
 }
 
 // said takes the sentences of a result, while listening, and returns
@@ -653,26 +733,277 @@ func (f *follow) answerDue(now time.Time) (topic string, n int, ok bool) {
 // reply takes On the Record's answer to a card's question: the lines that
 // answer it, or that the archive has none, or what went wrong. One that
 // nothing waits for any more is dropped.
-func (f *follow) reply(n int, b Brief, err error) (shown int, taken bool) {
+func (f *follow) reply(n int, b Brief, err error, now time.Time) (shown int, taken, write bool) {
 	if n == 0 || n != f.answering {
-		return 0, false
+		return 0, false, false
 	}
 	f.answering = 0
+	if err == nil {
+		f.remember(b, now)
+	}
 	c := f.card(n)
 	if c == nil {
-		return 0, true
+		return 0, true, false
 	}
-	c.done = true
 	if err != nil {
-		c.note = sentence(brief(err))
-		return 0, true
+		c.done, c.note = true, sentence(brief(err))
+		return 0, true, false
 	}
+	// The lines that share the question's words are kept, and shown if
+	// the writer can't answer.
 	c.lines = answerLines(c.q, b, 3)
+	if f.writer {
+		if from := passages(c.q, b, f.cfg.AnswerTokens); len(from) > 0 {
+			c.from, c.write = from, true
+			return 0, true, true
+		}
+	}
+	f.fallback(c)
+	return len(c.lines), true, false
+}
+
+// fallback ends a card with the lines that share its question's words,
+// or a word that the archive has none.
+func (f *follow) fallback(c *card) {
+	c.done, c.from = true, nil
 	if len(c.lines) == 0 {
 		c.note = "No answer in the archive."
 	}
 	f.lines += len(c.lines)
-	return len(c.lines), true
+}
+
+// writeDue says which card's answer to ask the writer for now: the oldest
+// waiting, while listening, never while another answer, a check or a
+// round is out. One it returns is under way: answerWritten or abandonWrite ends
+// it.
+func (f *follow) writeDue(now time.Time) (Prompt, int, bool) {
+	if !f.listening() || !f.writer || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+		return Prompt{}, 0, false
+	}
+	for i := len(f.cards) - 1; i >= 0; i-- {
+		if c := f.cards[i]; c.write {
+			c.write = false
+			f.writing, f.writeAsked = c.n, now
+			return answerPrompt(c.q, c.from), c.n, true
+		}
+	}
+	return Prompt{}, 0, false
+}
+
+// answerWritten takes what the writer wrote for a card, and shows it only if it
+// checks out: its answer and sources, or that the archive has no answer,
+// or that what it wrote didn't check out. When the writer failed, the
+// card shows the lines that share the question's words. One that nothing
+// waits for any more is dropped.
+func (f *follow) answerWritten(n int, text string, err error) (o outcome, why string, taken bool) {
+	if n == 0 || n != f.writing {
+		return 0, "", false
+	}
+	f.writing = 0
+	c := f.card(n)
+	if c == nil {
+		return 0, "", true
+	}
+	if err != nil {
+		f.wrote = "Couldn't ask the local model for an answer: " + sentence(brief(err))
+		if errors.Is(err, ErrLoading) {
+			f.wrote = "The local model is still loading, so the answer shows lines that share the question's words."
+		}
+		f.fallback(c)
+		return 0, "", true
+	}
+	f.wrote = ""
+	f.written++
+	shown, cited, o, why := readAnswer(text, len(c.from))
+	c.done, c.lines = true, nil
+	switch o {
+	case answered:
+		f.answeredN++
+		c.text = shown
+		for i, k := range cited {
+			p := c.from[k-1]
+			c.sources = append(c.sources, AnswerLine{Text: fmt.Sprintf("[%d] %s", i+1, whereSaid(p)), URL: p.URL})
+		}
+	case notInArchive:
+		f.notIn++
+		c.note = "Not in the archive."
+	default:
+		f.rejectedN++
+		c.note = "The local model's answer didn't check out, so it isn't shown."
+	}
+	c.from = nil
+	return o, why, true
+}
+
+// abandonWrite gives up on an answer the writer is late with by a second,
+// and shows the lines that share the question's words.
+func (f *follow) abandonWrite(now time.Time) (n int) {
+	if f.writing == 0 || now.Sub(f.writeAsked) <= f.cfg.WriteTimeout+time.Second {
+		return 0
+	}
+	n, f.writing = f.writing, 0
+	f.wrote = fmt.Sprintf("Couldn't ask the local model for an answer: it didn't answer within %s.", f.cfg.WriteTimeout)
+	if c := f.card(n); c != nil {
+		f.fallback(c)
+	}
+	return n
+}
+
+// state takes a sentence said in the call that asks nothing. One that
+// states a fact is kept for a Window, to be checked against the record.
+func (f *follow) state(u utterance) {
+	fs := facts(u.text)
+	if len(fs) == 0 || !f.listening() {
+		return
+	}
+	f.statements = append(f.statements, statement{text: u.text, at: u.to, facts: fs})
+	if len(f.statements) > 4*checkSaid {
+		f.statements = f.statements[len(f.statements)-4*checkSaid:]
+	}
+	f.newFact = true
+}
+
+// remember keeps the lines of a brief that state a fact, for f.cfg.Recall,
+// to check what is said against.
+func (f *follow) remember(b Brief, now time.Time) {
+	for _, p := range b.Points {
+		fs := facts(p.Text)
+		if len(fs) == 0 || !openable(p.URL) {
+			continue
+		}
+		f.records = slices.DeleteFunc(f.records, func(r record) bool { return r.p.URL == p.URL && r.p.Text == p.Text })
+		f.records = append(f.records, record{p: p, at: now, facts: fs})
+	}
+	if len(f.records) > 200 {
+		f.records = f.records[len(f.records)-200:]
+	}
+	// What was said before the brief came is checked against it too.
+	for _, s := range f.statements {
+		if now.Sub(s.at) < f.cfg.Window {
+			f.newFact = true
+		}
+	}
+}
+
+// checkDue says whether to ask the writer now whether what was said in
+// the last Window differs from the records of the last f.cfg.Recall, and
+// what: while listening with a writer chosen, once something that states a
+// fact was said since the last check, f.cfg.CheckEvery after it, never
+// while an answer is written or waits to be, nor while a round is out, and
+// only when a record shares a key word with what was said. A check it
+// returns is under way: checkedBy or abandonCheck ends it.
+func (f *follow) checkDue(now time.Time) (Prompt, int, int, int, bool) {
+	if !f.listening() || !f.writer || !f.newFact || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+		return Prompt{}, 0, 0, 0, false
+	}
+	if !f.checked.IsZero() && now.Sub(f.checked) < f.cfg.CheckEvery {
+		return Prompt{}, 0, 0, 0, false
+	}
+	for _, c := range f.cards {
+		if c.write {
+			return Prompt{}, 0, 0, 0, false
+		}
+	}
+	f.newFact = false
+	f.records = slices.DeleteFunc(f.records, func(r record) bool { return now.Sub(r.at) >= f.cfg.Recall })
+	var said []statement
+	for _, s := range f.statements {
+		if now.Sub(s.at) < f.cfg.Window {
+			said = append(said, s)
+		}
+	}
+	if len(said) > checkSaid {
+		said = said[len(said)-checkSaid:]
+	}
+	type scored struct {
+		r     record
+		score int
+	}
+	for key, at := range f.differed {
+		if now.Sub(at) >= f.cfg.Quiet {
+			delete(f.differed, key)
+		}
+	}
+	var near []scored
+	for _, r := range f.records {
+		if _, lately := f.differed[r.p.URL+"\x00"+r.p.Text]; lately {
+			// Shown to differ lately: not asked about again yet.
+			continue
+		}
+		score := 0
+		for _, s := range said {
+			score += related(s.text, r.p.Text)
+		}
+		if score > 0 {
+			near = append(near, scored{r, score})
+		}
+	}
+	slices.SortStableFunc(near, func(a, b scored) int { return b.score - a.score })
+	var records []record
+	used := 0
+	for _, n := range near {
+		cost := tokens(numbered(len(records)+1, n.r.p))
+		if len(records) == checkRecords || used+cost > checkMost {
+			break
+		}
+		used += cost
+		records = append(records, n.r)
+	}
+	if len(said) == 0 || len(records) == 0 {
+		return Prompt{}, 0, 0, 0, false
+	}
+	f.checks++
+	f.checking, f.checked = f.checks, now
+	f.check = checkAsked{said: said, records: records}
+	return checkPrompt(said, records), f.checking, len(said), len(records), true
+}
+
+// checkedBy takes what the writer wrote about a check, and shows the
+// difference it found only if it checks out and the same record wasn't
+// shown to differ within f.cfg.Quiet. One difference is shown at a time,
+// the newest, for f.cfg.Hold. It says what came of the check, in On Air's
+// own words.
+func (f *follow) checkedBy(n int, text string, err error, now time.Time) (result string, taken bool) {
+	if n == 0 || n != f.checking {
+		return "", false
+	}
+	f.checking = 0
+	asked := f.check
+	f.check = checkAsked{}
+	if err != nil {
+		return "failed: " + brief(err), true
+	}
+	f.checksBack++
+	s, r, quoted, recorded, why := readCheck(text, asked.said, asked.records)
+	switch {
+	case why != "":
+		f.checkRejected++
+		return "rejected: " + why, true
+	case s == nil:
+		return "nothing differs", true
+	}
+	for key, at := range f.differed {
+		if now.Sub(at) >= f.cfg.Quiet {
+			delete(f.differed, key)
+		}
+	}
+	key := r.p.URL + "\x00" + r.p.Text
+	if _, lately := f.differed[key]; lately {
+		return "differs, as shown lately", true
+	}
+	f.differed[key] = now
+	f.found++
+	f.differs = &differs{line: differsLine(*s, *r, quoted, recorded), at: now}
+	return "differs, shown", true
+}
+
+// abandonCheck gives up on a check the writer is late with by a second.
+func (f *follow) abandonCheck(now time.Time) (n int) {
+	if f.checking == 0 || now.Sub(f.checked) <= f.cfg.WriteTimeout+time.Second {
+		return 0
+	}
+	n, f.checking, f.check = f.checking, 0, checkAsked{}
+	return n
 }
 
 // abandonAnswer gives up on a card's question whose answer is late by a

@@ -64,10 +64,12 @@ func main() {
 	if client, err := archive.New(archive.Door); err == nil {
 		door = client
 	}
-	// The model asked about the call runs on this Mac, from the Python
+	// The models asked about the call run on this Mac, from the Python
 	// environment tools/setup-models makes in On Air's own folder.
-	judges := map[string]live.Judge{recorder.Local: localmodel.New(filepath.Join(support, "models", "venv", "bin", "python"))}
-	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges)
+	python := filepath.Join(support, "models", "venv", "bin", "python")
+	judges := map[string]live.Judge{recorder.Local: localmodel.New(python)}
+	writers := map[string]live.Writer{recorder.Local: localmodel.NewWriter(python)}
+	follow := live.Start(live.Defaults, door, screen{}, time.Now, judges, writers)
 	app := recorder.New(live.Tap(edge{}, follow), recorder.Config{Rows: 1080, FPS: 15, PieceSeconds: 4, VideoBitrate: 1_800_000, Microphone: true, QuietSeconds: 5},
 		filepath.Join(support, "spool"), filepath.Join(home, "Movies", "On Air"), filepath.Join(support, "settings.json"), time.Now)
 	mac.Handle(bridge{app, follow})
@@ -120,13 +122,17 @@ func (screen) Show(p live.Panel) {
 	}
 	var answers []mac.Answer
 	for _, a := range p.Answers {
-		answer := mac.Answer{Question: a.Question, Note: a.Note}
+		answer := mac.Answer{Question: a.Question, Text: a.Text, Note: a.Note}
+		for _, l := range a.Sources {
+			answer.Sources = append(answer.Sources, mac.AnswerLine{Text: l.Text, Where: l.Where, URL: l.URL})
+		}
 		for _, l := range a.Lines {
 			answer.Lines = append(answer.Lines, mac.AnswerLine{Text: l.Text, Where: l.Where, URL: l.URL})
 		}
 		answers = append(answers, answer)
 	}
-	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, answers, links)
+	differs := mac.AnswerLine{Text: p.Differs.Text, Where: p.Differs.Where, URL: p.Differs.URL}
+	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, differs, answers, links)
 }
 
 // bridge is the recorder and the live side, as the Mac reports things to

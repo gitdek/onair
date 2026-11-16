@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,7 +188,22 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 				}
 				panic("the model broke")
 			}}
-			c := Start(fast, archive, f.screen, time.Now, map[string]Judge{"local": judge})
+			// And its writer: slow, never answering, panicking, or
+			// writing nonsense, by turns.
+			var writes atomic.Int32
+			writer := &fakeWriter{write: func(ctx context.Context, p Prompt) (string, error) {
+				switch writes.Add(1) % 4 {
+				case 0:
+					<-ctx.Done()
+					return "", ctx.Err()
+				case 1:
+					<-never
+				case 2:
+					return strings.Repeat("[99] {\"differs\": true} ", 10000), nil
+				}
+				panic("the model broke")
+			}}
+			c := Start(fast, archive, f.screen, time.Now, map[string]Judge{"local": judge}, map[string]Writer{"local": writer})
 			c.Judging("local")
 			got, files := session(t, func(e recorder.Edge) recorder.Edge { return Tap(e, c) }, words(c))
 			if !reflect.DeepEqual(got, want) {
@@ -205,7 +221,7 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 // capture records, and when a recording runs.
 func TestTheTapTellsTheLiveSideWhatTheRecorderDoes(t *testing.T) {
 	screen := &fakeScreen{}
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil, nil)
 	dir := t.TempDir()
 	app := recorder.New(Tap(&edgeLog{dir: dir}, c), recorder.Config{PieceSeconds: 4}, filepath.Join(dir, "spool"), filepath.Join(dir, "out"), filepath.Join(dir, "settings.json"), time.Now)
 	app.Displays([]recorder.Display{{ID: "d1", Name: "Built-in", Width: 1512, Height: 982, Main: true}, {ID: "d2", Name: "Studio", Width: 2560, Height: 1440}})

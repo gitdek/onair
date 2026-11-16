@@ -244,11 +244,11 @@ func TestACardsQuestionIsAskedOnceAtATimeOldestFirst(t *testing.T) {
 	if _, _, ok := f.answerDue(t0); ok {
 		t.Fatal("a second question was asked while the first waits")
 	}
-	if shown, taken := f.reply(n, madeUp(), nil); !taken || shown == 0 {
+	if shown, taken, _ := f.reply(n, madeUp(), nil, t0); !taken || shown == 0 {
 		t.Fatalf("the answer was taken %t, with %d lines", taken, shown)
 	}
 	_, n, _ = f.answerDue(t0.Add(time.Second))
-	f.reply(n, Brief{}, errors.New("On the Record didn't answer in time"))
+	f.reply(n, Brief{}, errors.New("On the Record didn't answer in time"), t0)
 	p := f.panel(t0.Add(2 * time.Second))
 	if p.Answers[0].Note != "On the Record didn't answer in time." || p.Answers[1].Lines[0].Text != "Priya clicked through 9 mockups for the team" || p.Answers[1].Note != "" {
 		t.Fatalf("cards %+v", p.Answers)
@@ -258,7 +258,7 @@ func TestACardsQuestionIsAskedOnceAtATimeOldestFirst(t *testing.T) {
 	q, _ := notice(utterance{text: "what did they decide about the office lease"})
 	f.ask(q, t0.Add(3*time.Second))
 	_, n, _ = f.answerDue(t0.Add(3 * time.Second))
-	f.reply(n, madeUp(), nil)
+	f.reply(n, madeUp(), nil, t0)
 	if note := f.panel(t0.Add(4 * time.Second)).Answers[0].Note; note != "No answer in the archive." {
 		t.Fatalf("a card with no answer says %q", note)
 	}
@@ -271,7 +271,7 @@ func TestACardsQuestionIsAskedOnceAtATimeOldestFirst(t *testing.T) {
 	if got := f.abandonAnswer(t0.Add(17 * time.Second)); got != n || f.panel(t0.Add(17 * time.Second)).Answers[0].Note != "On the Record didn't answer within 10s." {
 		t.Fatalf("gave up on %d: %+v", got, f.panel(t0.Add(17 * time.Second)).Answers[0])
 	}
-	if _, taken := f.reply(n, madeUp(), nil); taken {
+	if _, taken, _ := f.reply(n, madeUp(), nil, t0); taken {
 		t.Fatal("an answer given up on was taken")
 	}
 }
@@ -282,7 +282,7 @@ func TestTheControllerAnswersAQuestionHeardInTheCall(t *testing.T) {
 		answer: func(context.Context, string) (Found, error) { return Found{}, nil },
 		brief:  func(context.Context, string) (Brief, error) { return madeUp(), nil },
 	}
-	c := Start(fast, archive, screen, time.Now, nil)
+	c := Start(fast, archive, screen, time.Now, nil, nil)
 	defer c.Enabled(false)
 	c.Enabled(true)
 	c.Capturing("", true)
