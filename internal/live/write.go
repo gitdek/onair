@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -222,9 +223,10 @@ func readAnswer(text string, lines []Point) (shown string, cited []int, o outcom
 	if strings.Contains(strings.ToLower(t), "not in the archive") {
 		return "", nil, rejected, "it answered and said it couldn't"
 	}
-	// The first two sentences, each kept only when it cites.
+	// The first two sentences, each kept only when it cites, and says
+	// something besides its citations.
 	var parts, kept []string
-	from := 0
+	from, cites := 0, false
 	for _, end := range sentenceEnd.FindAllStringIndex(t, -1) {
 		parts = append(parts, strings.TrimSpace(t[from:end[1]]))
 		from = end[1]
@@ -233,9 +235,16 @@ func readAnswer(text string, lines []Point) (shown string, cited []int, o outcom
 		parts = append(parts, rest)
 	}
 	for _, one := range parts[:min(2, len(parts))] {
-		if citation.MatchString(one) {
+		if !citation.MatchString(one) {
+			continue
+		}
+		cites = true
+		if strings.IndexFunc(citation.ReplaceAllString(one, ""), func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0 {
 			kept = append(kept, one)
 		}
+	}
+	if len(kept) == 0 && cites {
+		return "", nil, rejected, "it wrote citations and nothing else"
 	}
 	t = strings.Join(kept, " ")
 	if utf8.RuneCountInString(t) > answerMost {
@@ -270,7 +279,50 @@ func readAnswer(text string, lines []Point) (shown string, cited []int, o outcom
 	case len(cited) == 0:
 		return "", nil, rejected, "it cited nothing"
 	}
+	// A figure a sentence gives in digits must be one that a passage it
+	// cites gives: the model may word what the notes say, but not change
+	// a sum, a count or a date and cite the notes for it.
+	for _, one := range kept {
+		var sources []Point
+		for _, c := range citation.FindAllStringSubmatch(one, -1) {
+			for _, s := range strings.Split(c[1], ",") {
+				if k, _ := strconv.Atoi(strings.TrimSpace(s)); k >= 1 && k <= n {
+					sources = append(sources, lines[k-1])
+				}
+			}
+		}
+		if !givenBy(citation.ReplaceAllString(one, " "), sources) {
+			return "", nil, rejected, "it gave a figure its sources don't"
+		}
+	}
 	return shown, cited, answered, ""
+}
+
+// givenBy says whether each figure a sentence gives in digits is one its
+// sources give: in their text, what they sit under or their meeting's
+// title, in digits or in words, or as their meeting's year or day of the
+// month. A figure given in words, such as "three things", is left as it
+// is written.
+func givenBy(sentence string, sources []Point) bool {
+	var theirs []float64
+	for _, p := range sources {
+		for _, text := range []string{p.Text, p.Under, p.Meeting} {
+			for _, f := range figures(text) {
+				theirs = append(theirs, f.value)
+			}
+		}
+		if d, err := time.Parse(time.DateOnly, p.Date); err == nil {
+			theirs = append(theirs, float64(d.Year()), float64(d.Day()))
+		}
+	}
+	for _, f := range figures(sentence) {
+		if f.digits && !slices.ContainsFunc(theirs, func(v float64) bool {
+			return math.Abs(v-f.value) <= 1e-9*math.Max(math.Abs(v), math.Abs(f.value))
+		}) {
+			return false
+		}
+	}
+	return true
 }
 
 // statement is a sentence said in the call that states a fact, and when
@@ -465,10 +517,12 @@ func fits(said, rec string) bool {
 	return true
 }
 
-// figure is a number a text gives, and whether it is said roughly.
+// figure is a number a text gives, whether it is said roughly, and
+// whether it is given in digits.
 type figure struct {
-	value float64
-	rough bool
+	value  float64
+	rough  bool
+	digits bool
 }
 
 // Number words, by value, and those that multiply.
@@ -492,11 +546,13 @@ func figures(text string) []figure {
 	var out []figure
 	all := strings.Fields(text)
 	for i := 0; i < len(all); i++ {
-		v, ok := worth(bare(all[i]))
+		w := bare(all[i])
+		v, ok := worth(w)
 		if !ok {
 			continue
 		}
-		f := figure{rough: i > 0 && rough[bare(all[i-1])] || i > 1 && rough[bare(all[i-2])]}
+		f := figure{rough: i > 0 && rough[bare(all[i-1])] || i > 1 && rough[bare(all[i-2])],
+			digits: strings.IndexFunc(w, unicode.IsDigit) == len(w)-len(strings.TrimLeft(w, "$€£"))}
 		for i+1 < len(all) {
 			next := bare(all[i+1])
 			if m, ok := times[next]; ok {

@@ -340,12 +340,14 @@ func TestWhatWasSaidBeforeTheBriefCameIsChecked(t *testing.T) {
 
 func TestFiguresAreReadAndFitted(t *testing.T) {
 	for text, want := range map[string]string{
-		"about $2 million for the round": "[{2e+06 true}]",
-		"a $750k pre-seed round":         "[{750000 false}]",
-		"past two thousand sign ups":     "[{2000 true}]",
-		"2,300 sign ups, up from 1,400":  "[{2300 false} {1400 false}]",
-		"twenty five testers on the 9th": "[{25 false} {9 false}]",
-		"more than 1.5m and under 40%":   "[{1.5e+06 true} {40 true}]",
+		// Each figure's value, whether it is said roughly, and whether it
+		// is given in digits.
+		"about $2 million for the round": "[{2e+06 true true}]",
+		"a $750k pre-seed round":         "[{750000 false true}]",
+		"past two thousand sign ups":     "[{2000 true false}]",
+		"2,300 sign ups, up from 1,400":  "[{2300 false true} {1400 false true}]",
+		"twenty five testers on the 9th": "[{25 false false} {9 false true}]",
+		"more than 1.5m and under 40%":   "[{1.5e+06 true true} {40 true true}]",
 		"no figure here, only words":     "[]",
 	} {
 		if got := fmt.Sprint(figures(text)); got != want {
