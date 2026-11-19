@@ -238,7 +238,38 @@ func TestACardIsWrittenFromWhatTheArchiveGathersAndOnlyLinesThatCheckOutShow(t *
 	}
 }
 
+// A written line may word what its notes say, but not change a sum, a
+// count or a date and cite them for it: a figure it gives in digits must
+// be one that a note it cites gives, as an answer's must.
+func TestACardsWrittenLineGivesOnlyFiguresTheNotesItCitesGive(t *testing.T) {
+	f := topical(t)
+	at := t0.Add(2 * time.Minute)
+	f.heardNames("the quillstone deal", false, at)
+	_, n, _ := f.topicFetchDue(at)
+	f.topicFetched(n, quillBrief(), nil, at.Add(2*time.Second))
+	f.topicWriteDue(at.Add(2 * time.Second))
+	c := f.tcard(n)
+	k := func(prefix string) int {
+		return slices.IndexFunc(c.from, func(p Point) bool { return strings.HasPrefix(p.Text, prefix) }) + 1
+	}
+	text := fmt.Sprintf("Quillstone wants a $400 glaze kit [%d]\nThe open studio moved to April 15 [%d]\nThe open studio moved to April 14 [%d]\n"+
+		"They fire two thousand mugs a week [%d]\nThe glaze kit costs $40 [%d]\n",
+		k("Quillstone wants"), k("The open studio"), k("The open studio"), k("Quillstone research"), k("The open studio"))
+	kept, left, why, taken := f.topicWritten(n, text, nil, at.Add(4*time.Second))
+	if !taken || kept != 2 || left != 3 || why != "a line gave a figure its notes don't" {
+		t.Fatalf("kept %d, left %d, because %q", kept, left, why)
+	}
+	var texts []string
+	for _, l := range f.panel(at.Add(4 * time.Second)).Cards[0].Lines {
+		texts = append(texts, l.Text)
+	}
+	if !slices.Equal(texts, []string{"The open studio moved to April 14", "They fire two thousand mugs a week"}) {
+		t.Errorf("lines %q", texts)
+	}
+}
+
 func TestWhatTheWriterWritesForACardIsReadStrictly(t *testing.T) {
+	notes := []Point{{Text: "A kit is $40 a box"}, {Text: "The open studio is on April 14"}}
 	for text, want := range map[string][]string{
 		"Not in the archive":  nil,
 		"Not in the archive.": nil,
@@ -249,7 +280,7 @@ func TestWhatTheWriterWritesForACardIsReadStrictly(t *testing.T) {
 		"A line with [1] and [x] brackets":       nil,
 		"It isn't not in the archive at all [1]": nil,
 	} {
-		lines, _, _ := readTopic(text, 2)
+		lines, _, _ := readTopic(text, notes)
 		var got []string
 		for _, l := range lines {
 			got = append(got, l.text)
@@ -258,7 +289,7 @@ func TestWhatTheWriterWritesForACardIsReadStrictly(t *testing.T) {
 			t.Errorf("%q: read %q, not %q", text, got, want)
 		}
 	}
-	lines, _, _ := readTopic("Both notes say so [1, 2] [2]", 2)
+	lines, _, _ := readTopic("Both notes say so [1, 2] [2]", notes)
 	if len(lines) != 1 || !slices.Equal(lines[0].cited, []int{1, 2}) {
 		t.Errorf("cited %+v", lines)
 	}

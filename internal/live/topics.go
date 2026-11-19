@@ -573,7 +573,7 @@ func (f *follow) topicWritten(n int, text string, err error, now time.Time) (kep
 		return 0, 0, brief(err), true
 	}
 	f.topicsWritten++
-	written, left, why := readTopic(text, len(c.from))
+	written, left, why := readTopic(text, c.from)
 	var lines []CardLine
 	var facts [][]string
 	for _, w := range written {
@@ -681,13 +681,16 @@ type topicLine struct {
 // number, which isn't kept.
 var bullet = regexp.MustCompile(`^\s*(?:[-*•–]|\d{1,2}[.)])\s+`)
 
-// readTopic checks what the writer wrote for a card, given n numbered
-// notes. Each line it keeps says a fact in a sentence of three words or
-// more and 120 characters at most, and cites, in square brackets after it,
-// only notes 1 to n and nothing else, which aren't shown in the line. A
-// line that doesn't is left out, and why the first was says why, in On
-// Air's own words. "Not in the archive" alone gives no line.
-func readTopic(text string, n int) (lines []topicLine, left int, why string) {
+// readTopic checks what the writer wrote for a card, given the notes it
+// was given, numbered from 1. Each line it keeps says a fact in a
+// sentence of three words or more and 120 characters at most, and cites,
+// in square brackets after it, only notes 1 to n and nothing else, which
+// aren't shown in the line; and, as an answer must, it gives in digits
+// only figures that a note it cites gives. A line that doesn't is left
+// out, and why the first was says why, in On Air's own words. "Not in the
+// archive" alone gives no line.
+func readTopic(text string, from []Point) (lines []topicLine, left int, why string) {
+	n := len(from)
 	t := strings.TrimSpace(strings.ReplaceAll(text, "**", ""))
 	if strings.EqualFold(strings.TrimRight(t, ".! "), "Not in the archive") {
 		return nil, 0, ""
@@ -745,6 +748,14 @@ func readTopic(text string, n int) (lines []topicLine, left int, why string) {
 		}
 		if utf8.RuneCountInString(rest) > 120 {
 			leave("a line was too long")
+			continue
+		}
+		var sources []Point
+		for _, k := range cited {
+			sources = append(sources, from[k-1])
+		}
+		if !givenBy(rest, sources) {
+			leave("a line gave a figure its notes don't")
 			continue
 		}
 		lines = append(lines, topicLine{text: rest, cited: cited})
