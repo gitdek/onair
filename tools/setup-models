@@ -1,16 +1,23 @@
 #!/bin/bash
-# Sets up, once, the local model On Air asks about a call: a Python
+# Sets up, once, the local models On Air asks about a call: a Python
 # environment in On Air's own folder, pinned to the versions it was tried
-# with, from which On Air runs its helper. It needs uv. It installs packages
-# from PyPI, and downloads no model: Liquid's d1-2B (MLX, 8-bit) must already
-# be in the Hugging Face cache, at the revision On Air pins, and the helper
-# only ever reads it from there. On Air never runs this by itself.
+# with, from which On Air runs its helpers. It needs uv. It installs
+# packages from PyPI, and downloads no model: Liquid's d1-2B (MLX, 8-bit),
+# which answers typed questions, and Qwen3 4B Instruct (2507, MLX, 4-bit),
+# which writes answers and checks what is said against the record, must
+# already be in the Hugging Face cache, at the revisions On Air pins, and
+# the helpers only ever read them from there. On Air never runs this by
+# itself.
 set -euo pipefail
 
 models="$HOME/Library/Application Support/On Air/models"
 venv="$models/venv"
-model=LiquidAI/d1-2B-MLX-8bit
-revision=3247d0483b11e5da31fa10e7979c23252fbe3580
+# Each model, its pinned revision, and the files the helper reads, which
+# are all a download needs: weights, config and tokenizer, and no code.
+pinned=(
+	"LiquidAI/d1-2B-MLX-8bit 3247d0483b11e5da31fa10e7979c23252fbe3580 config.json model.safetensors"
+	"mlx-community/Qwen3-4B-Instruct-2507-4bit 50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b config.json generation_config.json model.safetensors model.safetensors.index.json tokenizer.json tokenizer_config.json special_tokens_map.json added_tokens.json vocab.json merges.txt chat_template.jinja"
+)
 
 if ! command -v uv >/dev/null; then
 	echo "setup-models needs uv: https://docs.astral.sh/uv/" >&2
@@ -21,15 +28,23 @@ uv venv --quiet --allow-existing --python 3.13.14 "$venv"
 uv pip install --quiet --python "$venv/bin/python" \
 	mlx==0.32.4 mlx-lm==0.32.2 mlx-vlm==0.7.12 transformers==5.23.0 huggingface_hub==2.4.0
 
-# The model, from the cache only, where the helper finds it.
-if ! HF_HUB_OFFLINE=1 "$venv/bin/python" -I -c "
+# The models, from the cache only, where the helpers find them.
+missing=0
+for entry in "${pinned[@]}"; do
+	read -r model revision files <<<"$entry"
+	# shellcheck disable=SC2086 # the files are words
+	if ! HF_HUB_OFFLINE=1 "$venv/bin/python" -I -c "
 import os, sys
 from huggingface_hub import constants
 path = os.path.join(constants.HF_HUB_CACHE, 'models--' + sys.argv[1].replace('/', '--'), 'snapshots', sys.argv[2])
-sys.exit(0 if all(os.path.isfile(os.path.join(path, f)) for f in ('config.json', 'model.safetensors')) else 1)
-" "$model" "$revision"; then
-	echo "The environment is ready, but $model at $revision isn't in the Hugging Face cache." >&2
-	echo "Download it once, for example with: $venv/bin/hf download $model --revision $revision" >&2
+sys.exit(0 if all(os.path.isfile(os.path.join(path, f)) for f in sys.argv[3:]) else 1)
+" "$model" "$revision" $files; then
+		echo "The environment is ready, but $model at $revision isn't in the Hugging Face cache." >&2
+		echo "Download it once, for example with: \"$venv/bin/hf\" download $model $files --revision $revision" >&2
+		missing=1
+	fi
+done
+if [ "$missing" = 1 ]; then
 	exit 1
 fi
-echo "Ready: On Air asks the local model through $venv/bin/python."
+echo "Ready: On Air asks the local models through $venv/bin/python."

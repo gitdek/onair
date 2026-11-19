@@ -55,13 +55,15 @@ enum {
     ONAIR_LIVE_UNSUPPORTED = 3, // the Mac can't recognize the language by itself; the message names it
     ONAIR_LIVE_FAILED = 4,      // recognition reported an error; the message says what
     ONAIR_LIVE_DROPPED = 5,     // sound was dropped because recognition fell behind; the message is how many buffers so far
+    ONAIR_LIVE_DIAG = 6,        // a line for the diagnostic log, of counts, kinds and codes only
 };
 
-// Whose words onairHeard reports.
-enum {
-    ONAIR_SPEAKER_PERSON = 1, // the microphone: the person recording
-    ONAIR_SPEAKER_OTHERS = 2, // the call's sound: everyone else
-};
+// A word or so of a result of speech recognition, as onairHeard reports
+// it.
+typedef struct {
+    const char *text;
+    double at, length; // when it was said, in seconds from the start of its request's sound
+} onair_segment;
 
 // A link the live panel shows.
 typedef struct {
@@ -71,6 +73,16 @@ typedef struct {
     const char *why;   // a line on why it connects
     const char *link;  // what a click opens
 } onair_link;
+
+// A row of the live panel's answer cards: a card's question as heard, a
+// line of its answer, or a word on it, such as that the archive has no
+// answer.
+typedef struct {
+    const char *kind;  // "question", "line" or "note"
+    const char *text;
+    const char *where; // for a line: its meeting, date and moment
+    const char *link;  // for a line: what a click opens
+} onair_answer;
 
 // A connected display, as onairDisplays reports it.
 typedef struct {
@@ -175,14 +187,26 @@ void onair_reveal(const char *path);
 // ONAIR_LIVE_REFUSED follows.
 void onair_live_ask(void);
 // LiveListen starts or stops recognizing speech in capture's two sounds,
-// on the Mac only, and returns at once. While on, onairHeard reports the
-// finished words of each sound about every chunk seconds, and onairLive
-// reports what goes wrong.
+// added into one, on the Mac only, and returns at once. While on,
+// onairHeard reports the words of a request every chunk seconds of sound,
+// partial ones as they come and how far its sound has gone four times a
+// second, then its final ones, with how loud each of the two sounds was
+// meanwhile, and onairLive
+// reports what goes wrong, and what the diagnostic log counts.
 void onair_live_listen(int on, double chunk);
-// LiveShow sets what the live panel shows, or hides it: a status line,
-// what a model said about the call, a line each, and links. Any thread may
-// call it.
-void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_link *links, int count);
+// LiveShow sets what the live panel shows, or hides it: a line under its
+// title, a status line, what a model said about the call, a line each,
+// answer cards, a row each, and links. Any thread may call it.
+void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
+                     const onair_link *links, int count);
+// For tests, whose main thread runs nothing else. TestRunMain runs the
+// main thread's run loop for at most seconds, so that what was handed to
+// the main queue runs; only the main thread may call it. TestWaitMain
+// waits, on any other thread, until all that was handed to the main queue
+// before has run. TestMallocInUse is how many bytes malloc holds.
+void onair_test_run_main(double seconds);
+void onair_test_wait_main(void);
+long onair_test_malloc_in_use(void);
 // Quit ends the app.
 void onair_quit(void);
 

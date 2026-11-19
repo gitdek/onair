@@ -50,24 +50,24 @@ func TestARoundWaitsForNewWordsAndItsTime(t *testing.T) {
 	}
 }
 
-func TestADecisionAndADifferenceShowWhenTheyClearTheirThresholds(t *testing.T) {
+func TestADecisionShowsWhenItClearsItsThresholds(t *testing.T) {
 	f := judging()
 	f.answer(asked(t, f, at(10)), strong("m1"), nil, at(10))
 	r, n := roundAt(t, f, at(11))
 	if len(r.Records) != 1 || r.Records[0].Title != "Meeting m1" {
 		t.Fatalf("a round asked about %v", r.Records)
 	}
-	v := Verdict{Decision: 0.9, Stance: map[string]float64{"agreed": 0.7, "none": 0.2}, Differs: 0.8, Compared: true, Topic: 0.1}
+	v := Verdict{Decision: 0.9, Stance: map[string]float64{"agreed": 0.7, "none": 0.2}, Topic: 0.1}
 	f.judgement(n, r.Records, v, nil, at(12))
 	p := f.panel(at(12))
-	if strings.Join(p.Calls, " | ") != "Decision: agreed, at 15:00. | Differs from: Meeting m1 (2026-11-01)." || len(p.Links) != 1 {
+	if strings.Join(p.Calls, " | ") != "Decision: agreed, at 15:00." || len(p.Links) != 1 {
 		t.Fatalf("a verdict shows %v and %v", p.Calls, p.Links)
 	}
 	// Below the thresholds, nothing new shows, and what showed stays a
 	// while.
 	_, n = roundAt(t, f, at(30))
-	f.judgement(n, nil, Verdict{Decision: 0.69, Stance: map[string]float64{"agreed": 0.9}, Differs: 0.9}, nil, at(31))
-	if p := f.panel(at(31)); len(p.Calls) != 2 {
+	f.judgement(n, nil, Verdict{Decision: 0.69, Stance: map[string]float64{"agreed": 0.9}}, nil, at(31))
+	if p := f.panel(at(31)); len(p.Calls) != 1 {
 		t.Fatalf("after a weak verdict the panel shows %v", p.Calls)
 	}
 	if p := f.panel(at(12 + 120)); len(p.Calls) != 0 {
@@ -162,7 +162,7 @@ func TestTheControllerAsksTheChosenJudgeAndClosesItWhenUnchosen(t *testing.T) {
 	}}
 	cfg := fast
 	cfg.JudgeEvery, cfg.JudgeTimeout, cfg.Hold = 20*time.Millisecond, 50*time.Millisecond, time.Minute
-	c := Start(cfg, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, map[string]Judge{"local": judge})
+	c := Start(cfg, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, map[string]Judge{"local": judge}, nil)
 	c.Enabled(true)
 	c.Capturing("", true)
 	c.Recording(true)
@@ -203,7 +203,7 @@ func TestAJudgeThatFailsIsSaidInThePanelOnly(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			screen := &fakeScreen{}
-			c := Start(cfg, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, map[string]Judge{"local": &fakeJudge{verdict: tc.verdict}})
+			c := Start(cfg, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, map[string]Judge{"local": &fakeJudge{verdict: tc.verdict}}, nil)
 			c.Enabled(true)
 			c.Judging("local")
 			c.Capturing("", true)

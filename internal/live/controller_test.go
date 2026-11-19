@@ -5,13 +5,14 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 // fast is Defaults made quick enough to watch.
 var fast = Config{Window: time.Minute, Every: 20 * time.Millisecond, Least: 2, Chars: 4000, Most: 3, Quiet: time.Minute,
-	Timeout: 50 * time.Millisecond, Chunk: 15 * time.Second, Linger: time.Minute, Tick: 5 * time.Millisecond}
+	Timeout: 50 * time.Millisecond, Chunk: 15 * time.Second, Linger: time.Minute, Tick: 5 * time.Millisecond, Cards: 3, Again: time.Minute}
 
 // fakeScreen is the Mac, as the live side sees it.
 type fakeScreen struct {
@@ -60,11 +61,31 @@ func (s *fakeScreen) said() (asks int, listens []bool) {
 	return s.asks, append([]bool(nil), s.listens...)
 }
 
-// fakeArchive is On the Record, answering as answer says.
+// fakeArchive is On the Record, answering as answer says, and answering
+// a card's question as brief says, or else as answer does, with a line for
+// each meeting it finds.
 type fakeArchive struct {
 	mu     sync.Mutex
 	asked  []string
 	answer func(ctx context.Context, text string) (Found, error)
+	brief  func(ctx context.Context, question string) (Brief, error)
+	topics []string
+}
+
+func (a *fakeArchive) Answer(ctx context.Context, question string, transcript bool) (Brief, error) {
+	a.mu.Lock()
+	a.topics = append(a.topics, question)
+	brief, answer := a.brief, a.answer
+	a.mu.Unlock()
+	if brief != nil {
+		return brief(ctx, question)
+	}
+	found, err := answer(ctx, question)
+	var b Brief
+	for _, m := range found.Meetings {
+		b.Points = append(b.Points, Point{Text: m.Title, Meeting: m.Title, Date: m.Date, URL: m.URL})
+	}
+	return b, err
 }
 
 func (a *fakeArchive) Connections(ctx context.Context, text string) (Found, error) {
@@ -108,7 +129,7 @@ func say(c *Controller, stop chan struct{}) {
 func TestTheControllerAsksAndShowsWhatTheCallConnectsTo(t *testing.T) {
 	screen := &fakeScreen{}
 	archive := &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}
-	c := Start(fast, archive, screen, time.Now, nil)
+	c := Start(fast, archive, screen, time.Now, nil, nil)
 	c.Enabled(true)
 	waitFor(t, "the question about speech recognition", func() bool { asks, _ := screen.said(); return asks == 1 })
 	if _, listens := screen.said(); len(listens) != 0 {
@@ -167,9 +188,9 @@ func TestWhatGoesWrongAskingIsSaidInThePanelOnly(t *testing.T) {
 			var c *Controller
 			archive := &fakeArchive{answer: tc.answer}
 			if tc.nilArchive {
-				c = Start(fast, nil, screen, time.Now, nil)
+				c = Start(fast, nil, screen, time.Now, nil, nil)
 			} else {
-				c = Start(fast, archive, screen, time.Now, nil)
+				c = Start(fast, archive, screen, time.Now, nil, nil)
 			}
 			c.Enabled(true)
 			c.Capturing("", true)
@@ -191,7 +212,7 @@ func TestWhatGoesWrongAskingIsSaidInThePanelOnly(t *testing.T) {
 
 func TestABrokenScreenStopsTheControllerAndNothingElse(t *testing.T) {
 	screen := &fakeScreen{broken: true}
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}, screen, time.Now, nil)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return strong("m1"), nil }}, screen, time.Now, nil, nil)
 	c.Enabled(true)
 	c.Recording(true)
 	waitFor(t, "the controller to stop", c.stopped.Load)
@@ -214,7 +235,7 @@ func TestABrokenScreenStopsTheControllerAndNothingElse(t *testing.T) {
 func TestInputsNeverWaitForAControllerThatHangs(t *testing.T) {
 	screen := &fakeScreen{hang: make(chan struct{})}
 	defer close(screen.hang)
-	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil)
+	c := Start(fast, &fakeArchive{answer: func(context.Context, string) (Found, error) { return Found{}, nil }}, screen, time.Now, nil, nil)
 	c.Enabled(true)
 	c.Recording(true)
 	time.Sleep(20 * time.Millisecond)
@@ -247,4 +268,51 @@ func TestANilControllerTakesInputs(t *testing.T) {
 	c.Recording(true)
 	c.Heard(Heard{Text: "words"})
 	c.Report(SpeechRefused, "")
+}
+
+// logScreen is the Mac, keeping the diagnostic log's lines as well.
+type logScreen struct {
+	fakeScreen
+	lines []string
+}
+
+func (s *logScreen) Log(line string) {
+	s.mu.Lock()
+	s.lines = append(s.lines, line)
+	s.mu.Unlock()
+}
+
+func TestTheLogHoldsNeitherWordsNorWhatTheArchiveSaid(t *testing.T) {
+	screen := &logScreen{}
+	var n atomic.Int32
+	archive := &fakeArchive{answer: func(context.Context, string) (Found, error) {
+		if n.Add(1) == 1 {
+			found := strong("m1")
+			found.Meetings[0].Title = "Zebrafish review"
+			return found, nil
+		}
+		return Found{}, errors.New("On the Record refused the question: no zebrafish here")
+	}}
+	c := Start(fast, archive, screen, time.Now, nil, nil)
+	defer c.Enabled(false)
+	c.Enabled(true)
+	c.Capturing("", true)
+	c.Recording(true)
+	c.Report(SpeechAllowed, "")
+	c.Heard(Heard{Speaker: Person, Text: "the zebrafish launch", From: time.Now(), To: time.Now()})
+	c.Heard(Heard{Speaker: Others, Text: "and the zebrafish price", From: time.Now(), To: time.Now()})
+	waitFor(t, "a link", func() bool { return len(screen.last().Links) == 1 })
+	c.Heard(Heard{Speaker: Others, Text: "zebrafish again", From: time.Now(), To: time.Now()})
+	waitFor(t, "a failed question", func() bool { return strings.Contains(screen.last().Status, "Couldn't ask") })
+	screen.mu.Lock()
+	lines := strings.Join(screen.lines, "\n")
+	screen.mu.Unlock()
+	if strings.Contains(strings.ToLower(lines), "zebrafish") {
+		t.Fatalf("the log holds what was said or answered:\n%s", lines)
+	}
+	for _, want := range []string{"speech allowed", "words yours", "listen true", "ask 1 sent", "ask 1 answered in", "1 picked", "ask 2 failed after", ": On the Record refused the question", "panel shown"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("the log doesn't say %q:\n%s", want, lines)
+		}
+	}
 }

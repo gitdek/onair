@@ -134,7 +134,7 @@ The live loop and the interface with On the Record are described under [The whol
 
 ### Where milestone three is headed
 
-This is the direction, not settled design. Nothing in it is decided or built, and decisions 9 to 12 stand as they are.
+This is the direction, not settled design. Nothing in it is decided, and decisions 9 to 12 stand as they are. A first experiment, Live Context, builds some of it ahead of the milestones before it: [`SPEC.md`](../SPEC.md#live-context-a-first-experiment) says what, and how far it was tried.
 
 - **Fetch first, then judge.** When someone refers to the past, On Air fetches the matching record from On the Record in the background, through its read-only door on the Mac, with `search`, `find_connections` or `get_action_item`. On the next pass the decision model sees the claim and the record side by side, and scores how far they differ. That is how a contradiction is caught, and nothing waits on the fetch.
 - **Every turn carries its speaker.** The microphone and the call's sound reach On Air separately, before they are mixed for the file, so the live side can tell the person recording from everyone else. Names can come from the call's highlighted tile, as On the Record names speakers afterwards.

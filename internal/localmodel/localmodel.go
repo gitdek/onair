@@ -1,13 +1,15 @@
-// Package localmodel asks a model on this Mac typed questions about a
-// call: Liquid's d1-2B, which a helper process loads once and asks through
-// mlx-vlm. The helper speaks JSON lines over its standard input and output,
-// and has no network port. It runs from the Python environment that
-// tools/setup-models makes, uses the Hugging Face cache offline, and never
-// downloads anything. On Air starts it when it is first asked, starts it
-// again if it dies, and gives up after three failures, answers in between
-// or not, until it is closed and chosen again. One left unasked for half
-// an hour is stopped. It decides nothing: which questions to ask is here,
-// and what to make of the answers is internal/live's.
+// Package localmodel asks models on this Mac about a call, each through a
+// helper process that loads it once: Liquid's d1-2B, asked typed
+// questions through mlx-vlm, and Qwen3 4B Instruct, which writes a little
+// text through mlx-lm. A helper speaks JSON lines over its standard input
+// and output, and has no network port. It runs from the Python
+// environment that tools/setup-models makes, uses the Hugging Face cache
+// offline, and never downloads anything. On Air starts it when it is
+// first asked, or told to warm up, starts it again if it dies, and gives
+// up after three failures, answers in between or not, until it is closed
+// and chosen again. One left unasked for half an hour is stopped. It
+// decides nothing: which typed questions to ask is here, and what to write
+// about, and what to make of the answers, is internal/live's.
 package localmodel
 
 import (
@@ -28,7 +30,10 @@ import (
 )
 
 //go:embed helper.py
-var helper string
+var judgeHelper string
+
+//go:embed writer.py
+var writerHelper string
 
 // Limits on the helper.
 const (
@@ -39,9 +44,26 @@ const (
 	idleQuit      = 30 * time.Minute // a helper that isn't asked anything for this long is stopped
 )
 
-// Model is the local model, behind its helper. Several goroutines may use
-// it at once: one question goes to the helper at a time.
-type Model struct {
+// Model is the decision model, behind its helper, which a round's typed
+// questions go to. Several goroutines may use it at once: one question
+// goes to the helper at a time.
+type Model struct{ helper }
+
+// Writer is the writing model, behind its helper, which writes an answer
+// or a check for a prompt. Several goroutines may use it at once: one
+// prompt goes to the helper at a time.
+type Writer struct{ helper }
+
+// What the live side takes them for.
+var (
+	_ live.Judge  = (*Model)(nil)
+	_ live.Writer = (*Writer)(nil)
+	_ live.Warmer = (*Model)(nil)
+	_ live.Warmer = (*Writer)(nil)
+)
+
+// helper is a helper process, started when first asked.
+type helper struct {
 	argv []string // the helper's command
 	env  []string
 
@@ -58,14 +80,19 @@ type Model struct {
 	idle    *time.Timer   // stops a helper left unasked for quiet
 }
 
-// New returns the model behind a helper run by python, the Python of the
-// environment tools/setup-models makes.
-func New(python string) *Model {
+// New returns the decision model behind a helper run by python, the
+// Python of the environment tools/setup-models makes.
+func New(python string) *Model { return &Model{newHelper(python, judgeHelper)} }
+
+// NewWriter returns the writing model behind a helper run by python.
+func NewWriter(python string) *Writer { return &Writer{newHelper(python, writerHelper)} }
+
+func newHelper(python, script string) helper {
 	env := []string{"PATH=/usr/bin:/bin", "HF_HUB_OFFLINE=1", "TRANSFORMERS_OFFLINE=1", "HF_HUB_DISABLE_TELEMETRY=1", "TOKENIZERS_PARALLELISM=false"}
 	if home, err := os.UserHomeDir(); err == nil {
 		env = append(env, "HOME="+home)
 	}
-	return &Model{argv: []string{python, "-I", "-c", helper}, env: env, turn: make(chan struct{}, 1), quiet: idleQuit}
+	return helper{argv: []string{python, "-I", "-c", script}, env: env, turn: make(chan struct{}, 1), quiet: idleQuit}
 }
 
 // helperProcess is one run of the helper.
@@ -103,66 +130,113 @@ func (t *tail) last() string {
 
 // ErrLoading says the model is still loading, which takes a few seconds
 // after the helper starts.
-var ErrLoading = errors.New("the local model is still loading")
+var ErrLoading = live.ErrLoading
 
 // Judge asks the helper the typed questions for a round, and reads its
-// answers as a verdict.
+// answers as a verdict. While the model loads, it returns ErrLoading at
+// once.
 func (m *Model) Judge(ctx context.Context, r live.Round) (live.Verdict, error) {
-	select {
-	case m.turn <- struct{}{}:
-	case <-ctx.Done():
-		return live.Verdict{}, errors.New("the local model was busy with the last question")
-	}
-	defer func() { <-m.turn }()
-	p, err := m.running()
+	line, err := m.ask(ctx, map[string]any{"state": r.Text, "questions": questions(r)}, false)
 	if err != nil {
 		return live.Verdict{}, err
+	}
+	var a struct {
+		Answers map[string]json.RawMessage `json:"answers"`
+	}
+	if json.Unmarshal(line, &a) != nil {
+		return live.Verdict{}, errShape
+	}
+	// An answer doesn't start the count of failures over: a helper that
+	// answers and then dies, again and again, would otherwise load the
+	// model afresh every round.
+	return verdict(a.Answers)
+}
+
+// Write asks the helper to write for a prompt, and returns what it wrote.
+// While the model loads, it waits for it as long as ctx allows, and then
+// returns ErrLoading, or at once for a prompt marked Quick.
+func (w *Writer) Write(ctx context.Context, p live.Prompt) (string, error) {
+	line, err := w.ask(ctx, map[string]any{"system": p.System, "user": p.User, "most": p.Most}, !p.Quick)
+	if err != nil {
+		return "", err
+	}
+	var a struct {
+		Text *string `json:"text"`
+	}
+	if json.Unmarshal(line, &a) != nil || a.Text == nil {
+		return "", errShape
+	}
+	return *a.Text, nil
+}
+
+var errShape = errors.New("the local model's answer wasn't in the shape On Air reads")
+
+// Warm starts the helper, if it isn't running, so that its model loads
+// before it is first asked.
+func (h *helper) Warm() { h.running() }
+
+// ask sends a request to the helper, numbered, and returns the line it
+// answers it with. While the model loads, it returns ErrLoading at once,
+// or, when wait is set, once ctx is done.
+func (h *helper) ask(ctx context.Context, request map[string]any, wait bool) ([]byte, error) {
+	select {
+	case h.turn <- struct{}{}:
+	case <-ctx.Done():
+		return nil, errors.New("the local model was busy with the last question")
+	}
+	defer func() { <-h.turn }()
+	p, err := h.running()
+	if err != nil {
+		return nil, err
+	}
+	if wait {
+		select {
+		case <-p.ready:
+		case <-ctx.Done():
+		}
 	}
 	select {
 	case <-p.ready:
 		if p.failed != nil {
-			return live.Verdict{}, m.lost(p, p.failed)
+			return nil, h.lost(p, p.failed)
 		}
 	default:
-		return live.Verdict{}, ErrLoading
+		return nil, ErrLoading
 	}
-	m.mu.Lock()
-	m.asked++
-	id := m.asked
-	m.lastUse = time.Now()
-	m.watch()
-	m.mu.Unlock()
-	request, err := json.Marshal(map[string]any{"id": id, "state": r.Text, "questions": questions(r)})
+	h.mu.Lock()
+	h.asked++
+	id := h.asked
+	h.lastUse = time.Now()
+	h.watch()
+	h.mu.Unlock()
+	request["id"] = id
+	b, err := json.Marshal(request)
 	if err != nil {
-		return live.Verdict{}, err
+		return nil, err
 	}
-	if _, err := p.in.Write(append(request, '\n')); err != nil {
-		return live.Verdict{}, m.lost(p, fmt.Errorf("the local model stopped: %w", err))
+	if _, err := p.in.Write(append(b, '\n')); err != nil {
+		return nil, h.lost(p, fmt.Errorf("the local model stopped: %w", err))
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return live.Verdict{}, errors.New("the local model didn't answer in time")
+			return nil, errors.New("the local model didn't answer in time")
 		case line, open := <-p.lines:
 			if !open {
-				return live.Verdict{}, m.lost(p, fmt.Errorf("the local model stopped%s", p.why()))
+				return nil, h.lost(p, fmt.Errorf("the local model stopped%s", p.why()))
 			}
 			var a struct {
-				ID      int64                      `json:"id"`
-				Answers map[string]json.RawMessage `json:"answers"`
-				Error   string                     `json:"error"`
+				ID    int64  `json:"id"`
+				Error string `json:"error"`
 			}
 			if json.Unmarshal(line, &a) != nil || a.ID != id {
 				// An answer to a question given up on, or something else.
 				continue
 			}
 			if a.Error != "" {
-				return live.Verdict{}, fmt.Errorf("the local model couldn't answer: %s", a.Error)
+				return nil, fmt.Errorf("the local model couldn't answer: %s", a.Error)
 			}
-			// An answer doesn't start the count of failures over: a
-			// helper that answers and then dies, again and again, would
-			// otherwise load the model afresh every round.
-			return verdict(a.Answers, len(r.Records) > 0)
+			return line, nil
 		}
 	}
 }
@@ -170,7 +244,7 @@ func (m *Model) Judge(ctx context.Context, r live.Round) (live.Verdict, error) {
 // running is the helper, started if it isn't running. It starts it once
 // more each time one dies, and not after startsAllowed have failed since
 // Close.
-func (m *Model) running() (*helperProcess, error) {
+func (m *helper) running() (*helperProcess, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.proc != nil {
@@ -197,7 +271,7 @@ func (m *Model) running() (*helperProcess, error) {
 // watch sets the timer that stops a helper once it has gone unasked for
 // m.quiet, so it goes by itself after a call, with no question to come.
 // The lock is held.
-func (m *Model) watch() {
+func (m *helper) watch() {
 	if m.idle == nil {
 		m.idle = time.AfterFunc(m.quiet, m.stopIdle)
 		return
@@ -208,7 +282,7 @@ func (m *Model) watch() {
 // stopIdle stops the helper if it has gone unasked for m.quiet, or looks
 // again when it would have. Stopping it isn't a failure: the next question
 // starts another.
-func (m *Model) stopIdle() {
+func (m *helper) stopIdle() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.proc == nil {
@@ -224,7 +298,7 @@ func (m *Model) stopIdle() {
 
 // fail counts a helper that couldn't start, didn't load or stopped, until
 // one answers. The lock is held.
-func (m *Model) fail(err error) {
+func (m *helper) fail(err error) {
 	m.failed++
 	m.why = err.Error()
 	m.gaveUp = m.failed >= startsAllowed
@@ -232,7 +306,7 @@ func (m *Model) fail(err error) {
 
 // lost lets go of a helper that stopped or never got ready, so the next
 // question starts another, and says why.
-func (m *Model) lost(p *helperProcess, err error) error {
+func (m *helper) lost(p *helperProcess, err error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.proc == p {
@@ -244,7 +318,7 @@ func (m *Model) lost(p *helperProcess, err error) error {
 }
 
 // Close stops the helper, and lets the next question start it again.
-func (m *Model) Close() {
+func (m *helper) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.proc != nil {
