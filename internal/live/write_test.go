@@ -567,7 +567,7 @@ func TestTheControllerWritesAnswersAndChecksWhatIsSaid(t *testing.T) {
 	}
 	for _, want := range []string{"reword 1 asked: about", "reword 1 came back in", "3 words added", "answer 1 asked, 12 words, 3 of them the local model's, for a card shown", "write 1 asked: 10 passages, about",
 		"card 1 shown ", "reworded in ", "written in ", "write 1 came back in", "answered, citing 1 source; so far 1 written, 1 answered, 0 not in the archive, 0 rejected",
-		"check 1 asked: 1 statements, ", "check 1 came back in", "differs, shown; so far 1 checked, 1 differ, 0 rejected", "1 written; status"} {
+		"check 1 asked: 1 statements, ", "check 1 came back in", "differs, shown; so far 1 checked, 1 differ, 0 rejected", "1 written; 1 card drawn with 1 line; status"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("the log doesn't say %q:\n%s", want, lines)
 		}

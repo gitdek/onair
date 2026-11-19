@@ -1,10 +1,13 @@
-// Package live decides what On Air's live panel shows while it records: the
-// last minute or so of what was said, when to ask On the Record what that
-// minute connects to, and which of the links it answers with are worth
-// showing; and which questions asked in the call, or topics brought up, to
-// ask the archive about, and which lines of its answer to show. It touches no screen, no network and no sound. The Mac
-// recognizes speech and draws the panel, internal/archive asks On the
-// Record, and both report here.
+// Package live decides what On Air's live panel shows while it records:
+// which projects, people and companies the archive knows are named in
+// what is said, and what a card about each shows, from the archive's lists
+// at once and then from a few lines a local model writes, checked here;
+// the open items of the people on the call; which questions asked in the
+// call to ask the archive about, and which lines of its answer to show;
+// what is said that differs from the record; and which cards the panel
+// draws. It touches no screen, no network and no sound. The Mac recognizes
+// speech and draws the panel, internal/archive asks On the Record, and
+// both report here.
 //
 // Nothing here can hold up a recording. Every input returns at once, having
 // at most set a field or added to a bounded queue, and the work runs on
@@ -109,6 +112,12 @@ type Point struct {
 	At, URL string
 	// Said marks a passage of the transcript, not of the notes.
 	Said bool
+	// Standing is where an action item stands on the board, when the line
+	// is one: "open", "on hold", "done" or "canceled".
+	Standing string
+	// Notebook marks a line of a notebook entry the brief quotes, which
+	// Meeting names and URL opens.
+	Notebook bool
 }
 
 // Archive is On the Record, as the live side asks it.
@@ -203,7 +212,34 @@ type Panel struct {
 	Answers []Answer
 	// Links are newest first.
 	Links []Link
+	// Cards are what the panel draws, newest first, Config.Cards at most:
+	// a card about a project, a person or a company the archive knows as
+	// it comes up, the open items of the people on the call, and a
+	// question's answer once it checks out. Each is titled, and has a few
+	// short lines, each with where it comes from.
+	Cards []Card
 }
+
+// Card is a card the panel draws: a title, a word on it, if anything, and
+// a few short lines. Written says its lines are the local model's, which
+// Go checked, rather than the archive's own.
+type Card struct {
+	Title   string
+	Lines   []CardLine
+	Note    string
+	Written bool
+}
+
+// CardLine is a short line of a card, a fact or an answer, and its
+// sources.
+type CardLine struct {
+	Text    string
+	Sources []Source
+}
+
+// Source is where a line comes from: a short label, such as "Nov 9", and
+// the moment, item or notebook entry a click on it opens.
+type Source struct{ Label, URL string }
 
 // Answer is an answer card: a question asked in the call, or a topic
 // brought up, as heard; the local model's answer, from On the Record's
@@ -309,12 +345,24 @@ type Config struct {
 	RewordTimeout time.Duration // how long it may take to give other words for a question, after which it goes as heard
 	CheckEvery    time.Duration // the least time between two checks of what was said against the record
 	Recall        time.Duration // how long the lines of a brief are kept to check what is said against
+
+	Topics      bool          // whether the projects, people and companies the archive knows get cards as they come up, and the owners' open items a standing one
+	TopicQuiet  time.Duration // how long a fact shown isn't shown again, and a name's card isn't made again but for something new
+	TopicAgain  time.Duration // the least time between two cards about the same name
+	TopicLines  int           // lines a card about a name shows at most
+	TopicTokens int           // tokens of notes the local model writes a card about a name from, about
+	FirstMinute time.Duration // how long after listening starts the people named add their open items to the standing card
+	HearShort   int           // letters a name needs to be heard though misheard by one, or as it sounds
+	HearLong    int           // and by two, or run together with a word misheard in it
 }
 
 // Defaults are the numbers On Air runs with.
 var Defaults = Config{
-	Window:  time.Minute,
-	Every:   15 * time.Second,
+	Window: time.Minute,
+	// Links to what the last minute connects to are no longer asked for:
+	// in a real call they were rarely what was being talked about, and
+	// cards about the names said now show what the archive knows.
+	Every:   0,
 	Least:   8,
 	Chars:   4000,
 	Most:    3,
@@ -346,4 +394,14 @@ var Defaults = Config{
 	RewordTimeout: time.Second,
 	CheckEvery:    15 * time.Second,
 	Recall:        5 * time.Minute,
+
+	// Tuned on a replay of the owner's own call: see internal/replay.
+	Topics:      true,
+	TopicQuiet:  10 * time.Minute,
+	TopicAgain:  2 * time.Minute,
+	TopicLines:  4,
+	TopicTokens: 1200,
+	FirstMinute: time.Minute,
+	HearShort:   6,
+	HearLong:    8,
 }

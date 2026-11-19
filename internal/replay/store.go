@@ -161,6 +161,18 @@ func (a Archive) Answer(ctx context.Context, question string, transcript bool) (
 	})
 }
 
+// Library asks for the archive's lists through the store, when the real
+// archive gives them.
+func (a Archive) Library(ctx context.Context) (live.Library, error) {
+	l, ok := a.Real.(live.Librarian)
+	if !ok {
+		return live.Library{}, errors.New("On the Record's lists can't be asked for")
+	}
+	return ask(ctx, a.Clock, a.Store, "lists", errArchiveLate, nil, func(ctx context.Context) (live.Library, error) {
+		return l.Library(ctx)
+	})
+}
+
 // Writer is the writing model, asked through a replay's store. Its model
 // is loaded, with the clock held, before it is first asked for real.
 type Writer struct {

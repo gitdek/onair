@@ -117,7 +117,7 @@ func passages(q question, b Brief, budget int) []Point {
 	seen := map[string]bool{}
 	for _, p := range b.Points {
 		key := strings.ToLower(strings.Join(strings.Fields(p.Text), " "))
-		if key == "" || !openable(p.URL) || seen[key] {
+		if key == "" || !openable(p.URL) || seen[key] || p.Notebook {
 			continue
 		}
 		seen[key] = true

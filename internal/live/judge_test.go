@@ -11,14 +11,14 @@ import (
 
 // judging is a follow that is on, recording, and has a judge, as from t0.
 func judging() *follow {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.judge(true)
 	return f
 }
 
 func roundAt(t *testing.T, f *follow, now time.Time) (Round, int) {
 	t.Helper()
-	f.hear(Heard{Speaker: Others, Text: words(Defaults.Least, "word"), To: now}, now)
+	f.hear(Heard{Speaker: Others, Text: words(linked.Least, "word"), To: now}, now)
 	r, n, ok := f.roundDue(now)
 	if !ok {
 		t.Fatalf("no round at %v", now)
@@ -27,8 +27,8 @@ func roundAt(t *testing.T, f *follow, now time.Time) (Round, int) {
 }
 
 func TestARoundWaitsForNewWordsAndItsTime(t *testing.T) {
-	f := listening(Defaults)
-	f.hear(Heard{Speaker: Others, Text: words(Defaults.Least, "word"), To: at(1)}, at(1))
+	f := listening(linked)
+	f.hear(Heard{Speaker: Others, Text: words(linked.Least, "word"), To: at(1)}, at(1))
 	if _, _, ok := f.roundDue(at(1)); ok {
 		t.Fatal("a round without a judge")
 	}
@@ -119,7 +119,7 @@ func TestWhatGoesWrongWithTheModelIsSaidInThePanel(t *testing.T) {
 		t.Fatalf("a model that failed shows %q", p.Status)
 	}
 	_, n = roundAt(t, f, at(20))
-	f.abandonRound(at(20).Add(Defaults.JudgeTimeout + 1001*time.Millisecond))
+	f.abandonRound(at(20).Add(linked.JudgeTimeout + 1001*time.Millisecond))
 	if p := f.panel(at(24)); !strings.Contains(p.Status, "Couldn't ask the model: it didn't answer within 2s.") {
 		t.Fatalf("a round given up on shows %q", p.Status)
 	}
