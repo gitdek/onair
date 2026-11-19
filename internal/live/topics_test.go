@@ -580,6 +580,33 @@ func TestADifferenceIsShownOnlyWhenBothAreAboutTheSameName(t *testing.T) {
 	}
 }
 
+// A meeting a person was in is the one of that title on that date: of a
+// meeting held every week under one title, only the weeks they were in.
+func TestAMeetingAPersonWasInIsKnownByItsDateAsWellAsItsTitle(t *testing.T) {
+	lib := madeUpLibrary()
+	again := Meeting{ID: "m-4", Title: "Quillstone pottery review", Date: "2026-03-24", URL: "https://archive.example/m/4", People: []string{"Ana Lima", "Ben Ortiz", "Tomas Weber"}}
+	lib.Meetings = append([]Meeting{again}, lib.Meetings...)
+	f := listening(Defaults)
+	f.writes(true)
+	f.library(lib, nil, t0)
+	line := func(date string) Point {
+		return Point{Text: "A shared kiln was discussed, nothing agreed", Meeting: "Quillstone pottery review", Date: date, Under: "Kilns"}
+	}
+	for _, c := range []struct {
+		said, date string
+		same       bool
+	}{
+		{"Priya offered us a shared kiln", "2026-03-10", true},
+		{"Priya offered us a shared kiln", "2026-03-24", false},
+		{"Tomas offered us a shared kiln", "2026-03-24", true},
+		{"Tomas offered us a shared kiln", "2026-03-10", false},
+	} {
+		if got := f.sameNames(c.said, line(c.date)); got != c.same {
+			t.Errorf("%q against the meeting of %s: %v", c.said, c.date, got)
+		}
+	}
+}
+
 func TestOnlySoManyCardsAboutNamesAreKeptButTheStandingCardIs(t *testing.T) {
 	f := topical(t)
 	for i := range 2 * keptTopics {

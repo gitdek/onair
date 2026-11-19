@@ -1292,8 +1292,10 @@ func (f *follow) pending() bool {
 // sameNames says whether a statement and a line of the record are about
 // the same people or companies: when the statement names any the archive
 // knows, but its owners, the line, what it sits under or its meeting must
-// name one of them, or be a meeting the person named was in. A statement
-// that names none, or a follow that knows no names, is taken as before.
+// name one of them, or be a meeting the person named was in, by its title
+// and, when both have one, its date, since a meeting held every week keeps
+// its title. A statement that names none, or a follow that knows no
+// names, is taken as before.
 func (f *follow) sameNames(said string, p Point) bool {
 	if f.roster == nil {
 		return true
@@ -1314,7 +1316,8 @@ func (f *follow) sameNames(said string, p Point) bool {
 			return true
 		}
 		for _, i := range r.all[k].meetings {
-			if r.all[k].person && r.lib.Meetings[i].Title == p.Meeting {
+			m := r.lib.Meetings[i]
+			if r.all[k].person && m.Title == p.Meeting && (m.Date == "" || p.Date == "" || firstOf(m.Date, 10) == firstOf(p.Date, 10)) {
 				return true
 			}
 		}
