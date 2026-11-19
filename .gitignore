@@ -11,3 +11,6 @@
 *.mov
 *.mp4
 build/
+
+# The pieces the writer made, kept as test data (#26)
+!internal/spool/testdata/writer/*.mp4
