@@ -108,7 +108,7 @@ go vet ./...
 go test ./...
 tools/check-format
 go run ./cmd/onair selftest       # on a Mac: made-up picture and sound through the real writer, no permission asked
-go run ./cmd/onair replay -as NAME TRANSCRIPT.json   # on a Mac: a transcript through the live side, its timeline kept privately
+go run ./cmd/onair replay -as NAME TRANSCRIPT.json   # on a Mac: a transcript through the live side, kept in On Air's own folder, never here
 tools/build-app                   # on a Mac: builds On Air.app into build/
 python3 docs/assets/generate.py   # redraws the README's graphics
 ```

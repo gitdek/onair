@@ -36,10 +36,31 @@ func replayCommand(args []string) error {
 	if flags.NArg() != 1 {
 		return errors.New("usage: onair replay [-as NAME] [-speed N] [-lose SHARE] [-models=false] [-report NAME,NAME] TRANSCRIPT.json")
 	}
-	if *label == "" || strings.ContainsAny(*label, `/\`) || strings.HasPrefix(*label, ".") {
-		return fmt.Errorf("a run's name is a plain word, not %q", *label)
-	}
 	path := flags.Arg(0)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	// Everything it keeps goes in On Air's own folder, never beside the
+	// transcript, and every name is checked before anything is read.
+	support := filepath.Join(home, "Library", "Application Support", "On Air")
+	dir, err := replay.Folder(support, path)
+	if err != nil {
+		return err
+	}
+	out, err := replay.RunFile(dir, *label)
+	if err != nil {
+		return err
+	}
+	var reports []string
+	if *report != "" {
+		for _, name := range strings.Split(*report, ",") {
+			reports = append(reports, strings.TrimSpace(name))
+		}
+		if _, err := replay.ReportFile(dir, reports); err != nil {
+			return err
+		}
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -49,17 +70,11 @@ func replayCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	support := filepath.Join(home, "Library", "Application Support", "On Air")
-	stem := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(path), ".json"), ".whisper")
-	dir := filepath.Join(support, "replays", stem)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	// A recording's file is named for when it began.
+	stem := filepath.Base(dir)
 	start, err := time.ParseInLocation("2006-01-02 15.04.05", strings.TrimSuffix(stem, " On Air"), time.Local)
 	if err != nil {
 		start = time.Date(2026, 1, 1, 9, 0, 0, 0, time.Local)
@@ -69,9 +84,9 @@ func replayCommand(args []string) error {
 		return err
 	}
 	clock := replay.NewClock(start, *speed)
-	store := &replay.Store{Dir: filepath.Join(support, "replays", "kept")}
-	if *report != "" {
-		return writeReport(dir, stem, strings.Split(*report, ","), words, start, replay.Archive{Real: client, Clock: clock, Store: store})
+	store := &replay.Store{Dir: replay.Kept(support)}
+	if len(reports) > 0 {
+		return writeReport(dir, stem, reports, words, start, replay.Archive{Real: client, Clock: clock, Store: store})
 	}
 	run := replay.Run{Words: words, Start: start, Speed: *speed, Heard: replay.Measured, Config: live.Defaults,
 		Archive: replay.Archive{Real: client, Clock: clock, Store: store}}
@@ -89,7 +104,6 @@ func replayCommand(args []string) error {
 	}
 	began := time.Now()
 	shown := run.Play(clock)
-	out := filepath.Join(dir, *label+".jsonl")
 	file, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -118,9 +132,17 @@ func replayCommand(args []string) error {
 // writeReport writes the timeline of the runs named, as kept in dir, to a
 // file of its own there, which only its owner may read, and says where.
 func writeReport(dir, stem string, names []string, words []replay.Word, start time.Time, door replay.Archive) error {
+	out, err := replay.ReportFile(dir, names)
+	if err != nil {
+		return err
+	}
 	var runs []replay.Played
 	for _, name := range names {
-		f, err := os.Open(filepath.Join(dir, strings.TrimSpace(name)+".jsonl"))
+		kept, err := replay.RunFile(dir, name)
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(kept)
 		if err != nil {
 			return err
 		}
@@ -129,7 +151,7 @@ func writeReport(dir, stem string, names []string, words []replay.Word, start ti
 		if err != nil {
 			return err
 		}
-		runs = append(runs, replay.Played{Name: strings.TrimSpace(name), Shown: shown})
+		runs = append(runs, replay.Played{Name: name, Shown: shown})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -137,7 +159,6 @@ func writeReport(dir, stem string, names []string, words []replay.Word, start ti
 	if err != nil {
 		return err
 	}
-	out := filepath.Join(dir, strings.Join(names, " and ")+".txt")
 	file, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
