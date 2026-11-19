@@ -989,11 +989,11 @@ func (f *follow) writeDue(now time.Time) (Prompt, int, bool) {
 	return Prompt{}, 0, false
 }
 
-// answerWritten takes what the writer wrote for a card, and shows it only if it
-// checks out: its answer and sources, or that the archive has no answer,
-// or that what it wrote didn't check out. When the writer failed, the
-// card shows the lines that share the question's words. One that nothing
-// waits for any more is dropped.
+// answerWritten takes what the writer wrote for a card, and shows it only
+// if it checks out: its answer and sources. When the writer found no
+// direct answer, or wrote one that didn't check out, or failed, the card
+// shows the lines that share the question's words, or else what came of
+// it. One that nothing waits for any more is dropped.
 func (f *follow) answerWritten(n int, text string, err error) (o outcome, why string, taken bool) {
 	if n == 0 || n != f.writing {
 		return 0, "", false
@@ -1024,11 +1024,17 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 			p := c.from[k-1]
 			c.sources = append(c.sources, AnswerLine{Text: fmt.Sprintf("[%d] %s", i+1, whereSaid(p)), URL: p.URL})
 		}
-	case notInArchive:
-		f.notIn++
-		// The model can be too strict when the notes use other words. If the
-		// cheap ranking found lines about the question, show them rather
-		// than nothing, and say the model found no direct answer.
+	default:
+		// The model found no direct answer, or wrote one that didn't check
+		// out. It can be too strict when the notes use other words, and an
+		// answer it gets wrong says nothing about the notes, so if the
+		// cheap ranking found lines about the question, they show rather
+		// than nothing, under a word that the model found no direct answer.
+		if o == notInArchive {
+			f.notIn++
+		} else {
+			f.rejectedN++
+		}
 		if len(closest) > 0 {
 			c.lines = closest
 			f.lines += len(closest)
@@ -1036,9 +1042,9 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 			break
 		}
 		c.note = "Not in the archive."
-	default:
-		f.rejectedN++
-		c.note = "The local model's answer didn't check out, so it isn't shown."
+		if o == rejected {
+			c.note = "The local model's answer didn't check out, so it isn't shown."
+		}
 	}
 	c.from = nil
 	return o, why, true
