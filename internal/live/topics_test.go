@@ -16,20 +16,20 @@ func madeUpLibrary() Library {
 	m := func(n string) string { return "https://archive.example/m/" + n }
 	return Library{
 		Meetings: []Meeting{
-			{ID: "m-3", Title: "Quillstone pricing review", Date: "2026-03-10", URL: m("3"), People: []string{"Ana Lima", "Ben Ortiz", "Priya Shah"},
-				Summary: "Pricing tiers, the Harbor Labs pilot and the launch date."},
+			{ID: "m-3", Title: "Quillstone pottery review", Date: "2026-03-10", URL: m("3"), People: []string{"Ana Lima", "Ben Ortiz", "Priya Shah"},
+				Summary: "Glaze colours, the Harbor Labs kiln trial and the open studio date."},
 			{ID: "m-2", Title: "Ana / Ben / Priya planning", Date: "2026-03-03", URL: m("2"), People: []string{"Ana Lima", "Ben Ortiz", "Priya Shah"},
 				Summary: "Getting ready for the Quillstone call."},
 			{ID: "m-1", Title: "Website Redesign Discussion", Date: "2026-02-20", URL: m("1"), People: []string{"Ana Lima", "Ben Ortiz", "Tomas Weber"},
 				Summary: "Early scope, a website redesign."},
 		},
 		Items: []Item{
-			{ID: "t-1", Owner: "Ana/Ben", Ours: true, Status: "open", Text: "Send Priya the Quillstone pricing sheet. No date was set.", Meeting: "Quillstone pricing review", MeetingDate: "2026-03-10", URL: m("3?t=100")},
-			{ID: "t-2", Owner: "Ben, helped by Ana", Ours: true, Status: "open", Text: "Book the Harbor Labs demo", Meeting: "Ana / Ben / Priya planning", MeetingDate: "2026-03-03", URL: m("2?t=50")},
-			{ID: "t-3", Owner: "Priya", Status: "open", Text: "Share the budget for the pilot", Meeting: "Quillstone pricing review", MeetingDate: "2026-03-10", URL: m("3?t=200")},
+			{ID: "t-1", Owner: "Ana/Ben", Ours: true, Status: "open", Text: "Send Priya the Quillstone glaze chart. No date was set.", Meeting: "Quillstone pottery review", MeetingDate: "2026-03-10", URL: m("3?t=100")},
+			{ID: "t-2", Owner: "Ben, helped by Ana", Ours: true, Status: "open", Text: "Book the Harbor Labs kiln visit", Meeting: "Ana / Ben / Priya planning", MeetingDate: "2026-03-03", URL: m("2?t=50")},
+			{ID: "t-3", Owner: "Priya", Status: "open", Text: "Share the cost of the kiln trial", Meeting: "Quillstone pottery review", MeetingDate: "2026-03-10", URL: m("3?t=200")},
 			{ID: "t-4", Owner: "Group", Status: "open", Text: "Plan the next review", URL: "https://elsewhere.example/private"},
 		},
-		Notes: []Note{{ID: "n-1", Title: "Quillstone: what we learned (Mar 10)", Tags: []string{"quillstone"}, Updated: "2026-03-11T10:00:00.000Z", URL: "https://archive.example/notebook/n-1"}},
+		Notes: []Note{{ID: "n-1", Title: "Quillstone: kiln notes (Mar 10)", Tags: []string{"quillstone"}, Updated: "2026-03-11T10:00:00.000Z", URL: "https://archive.example/notebook/n-1"}},
 	}
 }
 
@@ -90,8 +90,9 @@ func TestANameIsHeardAsSaidSplitOrMisheard(t *testing.T) {
 		"what about quillen stone then":            {"Quillstone"},
 		"the quill and the stone":                  nil,
 		"I'd say Quilstone":                        {"Quillstone"},
-		"Finding it":                               nil,
-		"Harbour labs wants a pilot":               {"Harbor Labs"},
+		"Millstone is heavy":                       nil,
+		"a millstone round the neck":               nil,
+		"Harbour labs wants a kiln":                {"Harbor Labs"},
 		"did priya send it":                        {"Priya Shah"},
 		"I talked to Pria yesterday":               {"Priya Shah"},
 		"Ben thinks so":                            {"Ben Ortiz"},
@@ -129,15 +130,15 @@ func TestTheStandingCardShowsTheOwnersOpenItemsAndThoseOfPeopleNamedFirst(t *tes
 	if len(p.Cards) != 1 || p.Cards[0].Title != "Open items" {
 		t.Fatalf("cards: %+v", p.Cards)
 	}
-	if got := p.Cards[0].Lines; len(got) != 2 || got[0].Text != "Ana/Ben: Send Priya the Quillstone pricing sheet." || got[0].Sources[0] != (Source{Label: "Mar 10", URL: "https://archive.example/m/3?t=100"}) ||
-		got[1].Text != "Ben: Book the Harbor Labs demo" {
+	if got := p.Cards[0].Lines; len(got) != 2 || got[0].Text != "Ana/Ben: Send Priya the Quillstone glaze chart." || got[0].Sources[0] != (Source{Label: "Mar 10", URL: "https://archive.example/m/3?t=100"}) ||
+		got[1].Text != "Ben: Book the Harbor Labs kiln visit" {
 		t.Fatalf("lines: %+v", got)
 	}
 	// Priya, named in the first minute, adds hers.
 	f.heardNames("hi Priya, good to see you", true, t0.Add(20*time.Second))
 	got := f.panel(t0.Add(20 * time.Second)).Cards
 	i := slices.IndexFunc(got, func(c Card) bool { return c.Title == "Open items" })
-	if i < 0 || len(got[i].Lines) != 3 || !slices.ContainsFunc(got[i].Lines, func(l CardLine) bool { return l.Text == "Priya: Share the budget for the pilot" }) {
+	if i < 0 || len(got[i].Lines) != 3 || !slices.ContainsFunc(got[i].Lines, func(l CardLine) bool { return l.Text == "Priya: Share the cost of the kiln trial" }) {
 		t.Fatalf("after Priya was named: %+v", got)
 	}
 	// Named after the first minute, a person adds nothing to it.
@@ -164,7 +165,7 @@ func TestACardAboutANameComesAtOnceWithWhatTheListsHold(t *testing.T) {
 	for _, l := range p.Cards[0].Lines {
 		texts = append(texts, l.Text)
 	}
-	want := []string{"Last met Mar 10: Pricing tiers, the Harbor Labs pilot and the launch date.", "Notebook: Quillstone: what we learned (Mar 10)"}
+	want := []string{"Last met Mar 10: Glaze colours, the Harbor Labs kiln trial and the open studio date.", "Notebook: Quillstone: kiln notes (Mar 10)"}
 	if !slices.Equal(texts, want) {
 		t.Fatalf("lines %q", texts)
 	}
@@ -185,11 +186,11 @@ func TestACardAboutANameComesAtOnceWithWhatTheListsHold(t *testing.T) {
 func quillBrief() Brief {
 	u := "https://archive.example/m/3?t="
 	return Brief{Points: []Point{
-		{Text: "Quillstone wants a $40 seat price before the April launch", Under: "Pricing", Meeting: "Quillstone pricing review", Date: "2026-03-10", At: "4:00", URL: u + "240"},
-		{Text: "Send the pricing sheet", Under: "Next steps", Meeting: "Quillstone pricing review", Date: "2026-03-10", URL: u + "300", Standing: "done"},
-		{Text: "The launch moved to April 14", Under: "Dates", Meeting: "Quillstone pricing review", Date: "2026-03-10", At: "9:00", URL: u + "540"},
-		{Text: "A private line", Meeting: "Quillstone pricing review", Date: "2026-03-10", URL: "https://elsewhere.example/x"},
-		{Text: "Quillstone research: they raised $2M", Meeting: "Quillstone: what we learned", Date: "2026-03-11", URL: "https://archive.example/notebook/n-1", Notebook: true, Under: "notebook"},
+		{Text: "Quillstone wants a $40 glaze kit before the April open studio", Under: "Glazes", Meeting: "Quillstone pottery review", Date: "2026-03-10", At: "4:00", URL: u + "240"},
+		{Text: "Send the glaze chart", Under: "Next steps", Meeting: "Quillstone pottery review", Date: "2026-03-10", URL: u + "300", Standing: "done"},
+		{Text: "The open studio moved to April 14", Under: "Dates", Meeting: "Quillstone pottery review", Date: "2026-03-10", At: "9:00", URL: u + "540"},
+		{Text: "A private line", Meeting: "Quillstone pottery review", Date: "2026-03-10", URL: "https://elsewhere.example/x"},
+		{Text: "Quillstone research: they fire 2,000 mugs a week", Meeting: "Quillstone: kiln notes", Date: "2026-03-11", URL: "https://archive.example/notebook/n-1", Notebook: true, Under: "notebook"},
 	}}
 }
 
@@ -214,25 +215,25 @@ func TestACardIsWrittenFromWhatTheArchiveGathersAndOnlyLinesThatCheckOutShow(t *
 		}
 	}
 	p, wn, ok := f.topicWriteDue(at.Add(2 * time.Second))
-	if !ok || wn != n || !strings.Contains(p.User, "Topic: Quillstone") || strings.Contains(p.User, "Send the pricing sheet") {
+	if !ok || wn != n || !strings.Contains(p.User, "Topic: Quillstone") || strings.Contains(p.User, "Send the glaze chart") {
 		t.Fatalf("prompt %q", p.User)
 	}
 	k := func(prefix string) string {
 		i := slices.IndexFunc(c.from, func(p Point) bool { return strings.HasPrefix(p.Text, prefix) })
 		return fmt.Sprintf("[%d]", i+1)
 	}
-	text := "- Quillstone wants a $40 seat price " + k("Quillstone wants") + "\n" +
-		"2. The launch moved to April 14 " + k("The launch") + "\n" +
+	text := "- Quillstone wants a $40 glaze kit " + k("Quillstone wants") + "\n" +
+		"2. The open studio moved to April 14 " + k("The open studio") + "\n" +
 		"They are happy [99]\n" +
 		"No source here\n" +
-		"Raised two million " + k("Quillstone research") + " [see notes]\n"
+		"Fires two thousand mugs " + k("Quillstone research") + " [see notes]\n"
 	kept, left, why, taken := f.topicWritten(n, text, nil, at.Add(4*time.Second))
 	if !taken || kept != 2 || left != 3 || why != "a line cited a note it wasn't given" {
 		t.Fatalf("kept %d, left %d, because %q", kept, left, why)
 	}
 	card := f.panel(at.Add(4 * time.Second)).Cards[0]
-	if card.Title != "Quillstone" || len(card.Lines) != 2 || card.Lines[0].Text != "Quillstone wants a $40 seat price" ||
-		card.Lines[1].Text != "The launch moved to April 14" || card.Lines[0].Sources[0] != (Source{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}) {
+	if card.Title != "Quillstone" || len(card.Lines) != 2 || card.Lines[0].Text != "Quillstone wants a $40 glaze kit" ||
+		card.Lines[1].Text != "The open studio moved to April 14" || card.Lines[0].Sources[0] != (Source{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}) {
 		t.Fatalf("card %+v", card)
 	}
 }
@@ -241,8 +242,8 @@ func TestWhatTheWriterWritesForACardIsReadStrictly(t *testing.T) {
 	for text, want := range map[string][]string{
 		"Not in the archive":  nil,
 		"Not in the archive.": nil,
-		"The price is $40 a seat [1]\nLaunch is April 14 [2].": {"The price is $40 a seat", "Launch is April 14."},
-		"• Owner: Ben, booking the demo [1, 2]":                {"Owner: Ben, booking the demo"},
+		"The kit is $40 a box [1]\nThe open studio is April 14 [2].": {"The kit is $40 a box", "The open studio is April 14."},
+		"• Owner: Ben, booking the kiln visit [1, 2]":                {"Owner: Ben, booking the kiln visit"},
 		"Too short [1]":                          nil,
 		strings.Repeat("long ", 30) + "[1]":      nil,
 		"A line with [1] and [x] brackets":       nil,
@@ -276,7 +277,7 @@ func TestAFactShownLatelyIsNotShownAgain(t *testing.T) {
 	f.heardNames("and Priya", false, at.Add(time.Second))
 	p := f.tcards[0]
 	for _, l := range p.lines {
-		if strings.Contains(l.Text, "Pricing tiers") {
+		if strings.Contains(l.Text, "Glaze colours") {
 			t.Errorf("a fact shown on another card was shown again: %q", l.Text)
 		}
 	}
@@ -287,7 +288,7 @@ func TestAFactShownLatelyIsNotShownAgain(t *testing.T) {
 	}
 	p.gone = true
 	f.heardNames("Priya Shah", false, at.Add(Defaults.TopicQuiet+time.Minute))
-	if p2 := f.tcards[0]; p2 == p || !slices.ContainsFunc(p2.lines, func(l CardLine) bool { return strings.Contains(l.Text, "Pricing tiers") }) {
+	if p2 := f.tcards[0]; p2 == p || !slices.ContainsFunc(p2.lines, func(l CardLine) bool { return strings.Contains(l.Text, "Glaze colours") }) {
 		t.Errorf("after a while: %+v", p2.lines)
 	}
 }
@@ -338,15 +339,15 @@ func TestThePanelShowsThreeCardsNewestFirstAndAnAnswerCardAsTheAnswerPathHasIt(t
 	}
 	// A question being asked shows as the answer path has it, its word
 	// under it.
-	q := question{shown: "How much is the seat price?", topic: "how much is the seat price", keys: []key{{stem: "seat", weight: 1}, {stem: "price", weight: 1}}}
+	q := question{shown: "How much is the glaze kit?", topic: "how much is the glaze kit", keys: []key{{stem: "glaze", weight: 1}, {stem: "kit", weight: 1}}}
 	n, _, _ := f.ask(q, at.Add(4*time.Second))
-	if c := f.panel(at.Add(4 * time.Second)).Cards[0]; c.Title != "How much is the seat price?" || c.Note != "Looking…" || len(c.Lines) != 0 {
+	if c := f.panel(at.Add(4 * time.Second)).Cards[0]; c.Title != "How much is the glaze kit?" || c.Note != "Looking…" || len(c.Lines) != 0 {
 		t.Fatalf("a question being asked shows: %+v", c)
 	}
 	cd := f.card(n)
-	cd.done, cd.text, cd.chips = true, "The seat price is $40 [1]. Launch is April 14 [2].", []Source{{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}, {Label: "Mar 10", URL: "https://archive.example/m/3?t=540"}}
+	cd.done, cd.text, cd.chips = true, "The glaze kit is $40 [1]. The open studio is April 14 [2].", []Source{{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}, {Label: "Mar 10", URL: "https://archive.example/m/3?t=540"}}
 	c := f.panel(at.Add(5 * time.Second)).Cards[0]
-	if c.Title != "How much is the seat price?" || c.Note != "" || !c.Written || len(c.Lines) != 2 || c.Lines[0].Text != "The seat price is $40." || c.Lines[1].Sources[0].URL != "https://archive.example/m/3?t=540" {
+	if c.Title != "How much is the glaze kit?" || c.Note != "" || !c.Written || len(c.Lines) != 2 || c.Lines[0].Text != "The glaze kit is $40." || c.Lines[1].Sources[0].URL != "https://archive.example/m/3?t=540" {
 		t.Fatalf("the answered question's card: %+v", c)
 	}
 }
@@ -366,7 +367,7 @@ func TestTheControllerShowsACardAboutANameAndLogsCountsOnly(t *testing.T) {
 	writer := &fakeWriter{write: func(_ context.Context, p Prompt) (string, error) {
 		for _, l := range strings.Split(p.User, "\n") {
 			if strings.Contains(p.User, "Topic: Quillstone") && strings.Contains(l, "Quillstone wants a $40") {
-				return "Quillstone wants a $40 seat price before launch " + l[:strings.Index(l, "]")+1], nil
+				return "Quillstone wants a $40 glaze kit before the open studio " + l[:strings.Index(l, "]")+1], nil
 			}
 		}
 		return "Not in the archive", nil
@@ -384,13 +385,13 @@ func TestTheControllerShowsACardAboutANameAndLogsCountsOnly(t *testing.T) {
 	waitFor(t, "the card about the name", func() bool { p := screen.last(); return len(p.Cards) > 0 && p.Cards[0].Title == "Quillstone" })
 	waitFor(t, "its written line", func() bool {
 		p := screen.last()
-		return len(p.Cards) > 0 && p.Cards[0].Title == "Quillstone" && len(p.Cards[0].Lines) > 0 && p.Cards[0].Lines[0].Text == "Quillstone wants a $40 seat price before launch"
+		return len(p.Cards) > 0 && p.Cards[0].Title == "Quillstone" && len(p.Cards[0].Lines) > 0 && p.Cards[0].Lines[0].Text == "Quillstone wants a $40 glaze kit before the open studio"
 	})
 	screen.mu.Lock()
 	lines := append([]string(nil), screen.lines...)
 	screen.mu.Unlock()
 	for _, l := range lines {
-		for _, private := range []string{"Quillstone", "Harbor", "Priya", "Ana", "Ben", "seat", "pricing"} {
+		for _, private := range []string{"Quillstone", "Harbor", "Priya", "Ana", "Ben", "glaze", "kiln"} {
 			if strings.Contains(l, private) {
 				t.Errorf("the log says %q: %s", private, l)
 			}
@@ -406,11 +407,11 @@ func TestTheControllerShowsACardAboutANameAndLogsCountsOnly(t *testing.T) {
 func TestAQuestionIsAskedOfTheArchiveOnlyWhenItNamesWhatTheArchiveKnows(t *testing.T) {
 	f := topical(t)
 	for text, want := range map[string]bool{
-		"What did Priya ask for in the pilot?":        true,
-		"How did the Quillstone call go?":             true,
-		"Did the plumber fix the kitchen sink?":       false,
-		"Did Ben like the movie last night?":          false,
-		"Remember when we priced the pilot at forty?": true,
+		"What did Priya ask for in the kiln trial?": true,
+		"How did the Quillstone call go?":           true,
+		"Did the plumber fix the kitchen sink?":     false,
+		"Did Ben like the movie last night?":        false,
+		"Remember when we fired the kiln at forty?": true,
 	} {
 		q, ok := notice(utterance{text: text})
 		if !ok {
@@ -436,15 +437,15 @@ func TestACardPushedOffThePanelDoesntComeBack(t *testing.T) {
 	f.heardNames("Tomas Weber", false, at.Add(time.Second))
 	f.heardNames("Priya", false, at.Add(2*time.Second))
 	f.panel(at.Add(3 * time.Second))
-	q := question{shown: "How much is the seat price?", topic: "how much is the seat price", keys: []key{{stem: "seat", weight: 1}, {stem: "price", weight: 1}}}
+	q := question{shown: "How much is the glaze kit?", topic: "how much is the glaze kit", keys: []key{{stem: "glaze", weight: 1}, {stem: "kit", weight: 1}}}
 	n, _, _ := f.ask(q, at.Add(4*time.Second))
 	cd := f.card(n)
-	cd.done, cd.text, cd.chips = true, "The seat price is $40 [1].", []Source{{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}}
+	cd.done, cd.text, cd.chips = true, "The glaze kit is $40 [1].", []Source{{Label: "Mar 10", URL: "https://archive.example/m/3?t=240"}}
 	var names []string
 	for _, c := range f.panel(at.Add(5 * time.Second)).Cards {
 		names = append(names, c.Title)
 	}
-	if !slices.Equal(names, []string{"How much is the seat price?", "Priya Shah", "Tomas Weber"}) {
+	if !slices.Equal(names, []string{"How much is the glaze kit?", "Priya Shah", "Tomas Weber"}) {
 		t.Fatalf("cards %q", names)
 	}
 	// The question's card goes, as when the panel keeps three questions
@@ -461,20 +462,20 @@ func TestACardPushedOffThePanelDoesntComeBack(t *testing.T) {
 
 func TestADifferenceIsShownOnlyWhenBothAreAboutTheSameName(t *testing.T) {
 	f := topical(t)
-	quill := Point{Text: "A revenue share was discussed, nothing agreed", Meeting: "Quillstone pricing review", Under: "Terms"}
-	if !f.sameNames("Quillstone offered us a revenue share", quill) {
+	quill := Point{Text: "A shared kiln was discussed, nothing agreed", Meeting: "Quillstone pottery review", Under: "Kilns"}
+	if !f.sameNames("Quillstone offered us a shared kiln", quill) {
 		t.Error("a statement about Quillstone against Quillstone's record")
 	}
-	if f.sameNames("Harbor Labs offered us a revenue share", quill) {
+	if f.sameNames("Harbor Labs offered us a shared kiln", quill) {
 		t.Error("a statement about Harbor Labs against Quillstone's record")
 	}
-	if !f.sameNames("Priya offered us a revenue share", quill) {
+	if !f.sameNames("Priya offered us a shared kiln", quill) {
 		t.Error("a statement about Priya against a meeting she was in")
 	}
-	if f.sameNames("Tomas offered us a revenue share", quill) {
+	if f.sameNames("Tomas offered us a shared kiln", quill) {
 		t.Error("a statement about Tomas against a meeting he wasn't in")
 	}
-	if !f.sameNames("they offered us a revenue share", quill) {
+	if !f.sameNames("they offered us a shared kiln", quill) {
 		t.Error("a statement that names no one")
 	}
 }
@@ -516,13 +517,13 @@ func TestAWrittenCardKeepsItsOpenItemsAsTheListsHoldThem(t *testing.T) {
 	f.topicFetched(n, quillBrief(), nil, at.Add(time.Second))
 	f.topicWriteDue(at.Add(time.Second))
 	c := f.tcard(n)
-	i := slices.IndexFunc(c.from, func(p Point) bool { return strings.HasPrefix(p.Text, "The launch") })
-	f.topicWritten(n, fmt.Sprintf("Priya says the launch moved to April 14 [%d]", i+1), nil, at.Add(3*time.Second))
+	i := slices.IndexFunc(c.from, func(p Point) bool { return strings.HasPrefix(p.Text, "The open studio") })
+	f.topicWritten(n, fmt.Sprintf("Priya says the open studio moved to April 14 [%d]", i+1), nil, at.Add(3*time.Second))
 	var texts []string
 	for _, l := range f.panel(at.Add(3 * time.Second)).Cards[0].Lines {
 		texts = append(texts, l.Text)
 	}
-	if !slices.Equal(texts, []string{"Open: Share the budget for the pilot (Priya)", "Priya says the launch moved to April 14"}) {
+	if !slices.Equal(texts, []string{"Open: Share the cost of the kiln trial (Priya)", "Priya says the open studio moved to April 14"}) {
 		t.Errorf("lines %q", texts)
 	}
 }

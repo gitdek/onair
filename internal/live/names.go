@@ -519,8 +519,8 @@ func joined(text string) string {
 }
 
 // sound is a word as it sounds, roughly: letters that sound alike made
-// one, and a letter said twice said once, so that "Vicky" sounds as
-// "Vikki" does, and "Corvin" as "Korvin".
+// one, and a letter said twice said once, so that "Pria" sounds as
+// "Priya" does, and "Quilstone" as "Quillstone".
 func sound(w string) string {
 	r := strings.NewReplacer("ph", "f", "ck", "k", "qu", "kw", "q", "k", "x", "ks", "oo", "u", "ou", "u", "ee", "i", "ie", "i", "y", "i", "z", "s").Replace(w)
 	var b strings.Builder
@@ -550,7 +550,8 @@ func sound(w string) string {
 // long name; and, for a name of eight letters or more, as two words with
 // its first four and last three letters and a few wrong between. A
 // sweep of a dictionary's words through an archive's names showed that
-// everyday words, "finding" or "proper", are a letter or two from a name.
+// everyday words are often a letter or two from a name, as "millstone"
+// is from a made-up "Quillstone".
 func (n roster) mentions(text string, cfg Config) []int {
 	words := heardWords(text)
 	var out []int
@@ -584,7 +585,7 @@ func (nm subject) heardIn(words []heardWord, cfg Config) bool {
 				}
 				if s.strict {
 					// A short name is taken as written, or with a
-					// capital as it sounds, as "Lina" for "Leena"; one
+					// capital as it sounds, as "Anna" for "Ana"; one
 					// that is also an everyday word only with a capital.
 					if size == 1 && !stop[got] && (got == want && (words[i].capital || !commonNames[want]) || words[i].capital && sound(got) == sound(want)) {
 						return true

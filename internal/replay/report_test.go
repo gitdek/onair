@@ -42,8 +42,8 @@ func TestARunIsMeasuredByItsCardsAndHowSoonTheyCame(t *testing.T) {
 	written := func(c live.Card) live.Card { c.Written = true; return c }
 	run := Played{Name: "after", Shown: []Shown{
 		{At: at(0), Panel: &live.Panel{Visible: true}},
-		{At: at(3), Panel: &live.Panel{Visible: true, Cards: []live.Card{card("Quillstone", "Last met Mar 10: pricing")}}},
-		{At: at(8), Panel: &live.Panel{Visible: true, Cards: []live.Card{written(card("Quillstone", "They want a $40 seat price"))}}},
+		{At: at(3), Panel: &live.Panel{Visible: true, Cards: []live.Card{card("Quillstone", "Last met Mar 10: glazes")}}},
+		{At: at(8), Panel: &live.Panel{Visible: true, Cards: []live.Card{written(card("Quillstone", "They want a $40 glaze kit"))}}},
 		{At: at(20), Panel: &live.Panel{Visible: true, Cards: []live.Card{{Title: "How much?", Lines: []live.CardLine{{Text: "No idea"}}}}}},
 	}}
 	mentions := []Mention{{Title: "Quillstone", At: 1600 * time.Millisecond}, {Title: "Priya Shah", At: 10 * time.Second}}
@@ -58,7 +58,7 @@ func TestARunIsMeasuredByItsCardsAndHowSoonTheyCame(t *testing.T) {
 	if err := Report(&b, "A made-up replay", words("so the quill stone numbers", time.Second), start, []Played{run}, mentions); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"after: 2 cards", "00:03  said: “…so the quill stone numbers”", "+ Quillstone", "~ Quillstone", "· They want a $40 seat price  (Mar 10)"} {
+	for _, want := range []string{"after: 2 cards", "00:03  said: “…so the quill stone numbers”", "+ Quillstone", "~ Quillstone", "· They want a $40 glaze kit  (Mar 10)"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("the report doesn't say %q:\n%s", want, b.String())
 		}
