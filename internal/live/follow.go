@@ -1013,7 +1013,7 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 	}
 	f.wrote, f.slow = "", false
 	f.written++
-	shown, cited, o, why := readAnswer(text, len(c.from))
+	shown, cited, o, why := readAnswer(text, c.from)
 	closest := c.lines
 	c.done, c.lines = true, nil
 	switch o {

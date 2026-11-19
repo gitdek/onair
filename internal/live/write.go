@@ -200,15 +200,16 @@ var (
 	sentenceEnd = regexp.MustCompile(`[.!?](?:\s*\[[0-9,\s]*\])*(?:\s+|$)`)
 )
 
-// readAnswer checks what the model wrote for a question, given n
-// numbered passages. It is either exactly "Not in the archive", or an
-// answer: those of its first two sentences that cite, at most answerMost
-// characters, which cite only the numbers 1 to n, in square brackets, and
-// put nothing else in them. An answer is shown with its citations numbered
-// again from 1, in the order they are first cited; cited is the passages'
-// numbers in that order. Anything else is rejected, and why says why in
-// On Air's own words.
-func readAnswer(text string, n int) (shown string, cited []int, o outcome, why string) {
+// readAnswer checks what the model wrote for a question, given the
+// passages it was given, numbered from 1. It is either exactly "Not in the
+// archive", or an answer: those of its first two sentences that cite, at
+// most answerMost characters, which cite only the numbers 1 to n, in
+// square brackets, and put nothing else in them. An answer is shown with
+// its citations numbered again from 1, in the order they are first cited;
+// cited is the passages' numbers in that order. Anything else is rejected,
+// and why says why in On Air's own words.
+func readAnswer(text string, lines []Point) (shown string, cited []int, o outcome, why string) {
+	n := len(lines)
 	t := strings.Join(strings.Fields(strings.ReplaceAll(text, "**", "")), " ")
 	t = strings.Trim(t, "\"'`“”")
 	t = strings.TrimSpace(t)

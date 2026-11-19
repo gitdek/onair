@@ -184,6 +184,11 @@ func TestAWrittenAnswerShowsOnlyWhenItChecksOut(t *testing.T) {
 }
 
 func TestTheWriterIsReadStrictly(t *testing.T) {
+	// Four passages, each giving the figures the answers below give.
+	var strict []Point
+	for range 4 {
+		strict = append(strict, Point{Text: "Halcyon hopes to raise $750k, and doors open on the 9th", Meeting: "Halcyon partner sync", Date: "2026-09-14", At: "6:12"})
+	}
 	for _, tc := range []struct {
 		text, shown string
 		cited       []int
@@ -208,10 +213,52 @@ func TestTheWriterIsReadStrictly(t *testing.T) {
 		{"It is $750k [1-2].", "", nil, rejected},
 		{"", "", nil, rejected},
 		{strings.Repeat("very ", 70) + "long [1].", "", nil, rejected},
+		// Citations with no words are no answer.
+		{"[1]", "", nil, rejected},
+		{"[2].", "", nil, rejected},
+		{"[1, 2]. [3]", "", nil, rejected},
+		// A figure given in digits must be one its sources give, in
+		// their text, or as their meeting's date or moment.
+		{"Halcyon hopes to raise $2 million [2].", "", nil, rejected},
+		{"Halcyon hopes to raise $750k [2], led by 4 angels.", "", nil, rejected},
+		{"Halcyon hopes to raise $750k [1]. Doors open on the 12th [2].", "", nil, rejected},
+		{"Halcyon hopes to raise $750,000 [2].", "Halcyon hopes to raise $750,000 [1].", []int{2}, answered},
+		{"They hope to raise 750 thousand dollars [3].", "They hope to raise 750 thousand dollars [1].", []int{3}, answered},
+		{"On September 14 they planned $750k [4].", "On September 14 they planned $750k [1].", []int{4}, answered},
+		{"At 6:12 they said doors open on the 9th of December [1].", "At 6:12 they said doors open on the 9th of December [1].", []int{1}, answered},
+		// Words for figures are left as they are written.
+		{"They want three things: sync, a calendar and folders [1].", "They want three things: sync, a calendar and folders [1].", []int{1}, answered},
 	} {
-		shown, cited, o, why := readAnswer(tc.text, 4)
+		shown, cited, o, why := readAnswer(tc.text, strict)
 		if shown != tc.shown || fmt.Sprint(cited) != fmt.Sprint(tc.cited) || o != tc.o || (o == rejected) != (why != "") {
 			t.Errorf("%q is read as %q %v %d (%s)", tc.text, shown, cited, o, why)
+		}
+	}
+}
+
+// A figure an answer gives in digits must be one that a passage its
+// sentence cites gives, not one that another passage, the question or the
+// model gives.
+func TestAWrittenAnswersFiguresAreItsSources(t *testing.T) {
+	from := []Point{
+		{Text: "The team settled on $12 a seat per month for the starter plan", Meeting: "Pricing review", Date: "2026-11-03", At: "12:31"},
+		{Text: "The waitlist reached 2,300 sign ups, up from 1,400 at the start of the month", Meeting: "Halcyon weekly", Date: "2026-10-21", At: "8:40"},
+	}
+	for _, tc := range []struct {
+		text string
+		o    outcome
+	}{
+		{"The starter plan is $12 a seat a month [1], and the waitlist is at 2,300 [2].", answered},
+		{"The starter plan is $12 a seat [1], with 2,300 on the waitlist [1, 2].", answered},
+		{"The waitlist reached 2300 sign ups [2].", answered},
+		{"The starter plan is $12 a seat a month [2].", rejected},
+		{"The waitlist reached 2,300 sign ups [1].", rejected},
+		{"The starter plan is $15 a seat a month [1].", rejected},
+		{"The waitlist grew by 900 sign ups [2].", rejected},
+		{"The starter plan is $12 a seat [1]. The waitlist is at 2,400 [2].", rejected},
+	} {
+		if _, _, o, why := readAnswer(tc.text, from); o != tc.o {
+			t.Errorf("%q is read as %d (%s)", tc.text, o, why)
 		}
 	}
 }

@@ -23,7 +23,7 @@ func AnswerFor(said string, b Brief, reworded ...string) (Prompt, func(text stri
 	}
 	from := passages(q, b, Defaults.AnswerTokens)
 	return answerPrompt(q, from), func(text string) (string, []Point, string) {
-		shown, cited, o, why := readAnswer(text, len(from))
+		shown, cited, o, why := readAnswer(text, from)
 		switch o {
 		case answered:
 			var lines []Point
