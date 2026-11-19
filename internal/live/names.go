@@ -522,7 +522,7 @@ func joined(text string) string {
 // one, and a letter said twice said once, so that "Pria" sounds as
 // "Priya" does, and "Quilstone" as "Quillstone".
 func sound(w string) string {
-	r := strings.NewReplacer("ph", "f", "ck", "k", "qu", "kw", "q", "k", "x", "ks", "oo", "u", "ou", "u", "ee", "i", "ie", "i", "y", "i", "z", "s").Replace(w)
+	r := soundsAlike.Replace(w)
 	var b strings.Builder
 	var last rune
 	for i, c := range r {
@@ -541,6 +541,11 @@ func sound(w string) string {
 	}
 	return b.String()
 }
+
+// soundsAlike makes one of letters that sound alike. It is built once:
+// every name is listened for in each sentence, several times a second
+// while one is being said.
+var soundsAlike = strings.NewReplacer("ph", "f", "ck", "k", "qu", "kw", "q", "k", "x", "ks", "oo", "u", "ou", "u", "ee", "i", "ie", "i", "y", "i", "z", "s")
 
 // mentions are the names said in a run of words, by their place in
 // n.all, once each, in the order said. A name is heard when its words

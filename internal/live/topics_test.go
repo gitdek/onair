@@ -114,6 +114,18 @@ func TestANameIsHeardAsSaidSplitOrMisheard(t *testing.T) {
 	}
 }
 
+// Every name the archive knows is listened for in each sentence, several
+// times a second while one is being said, so how a word sounds is worked
+// out without building its table of letters that sound alike each time.
+func TestHowAWordSoundsBuildsNoTableEachTime(t *testing.T) {
+	if n := testing.AllocsPerRun(200, func() { sound("quillstone") }); n > 10 {
+		t.Errorf("how a word sounds takes %.0f allocations", n)
+	}
+	if sound("benn") != sound("ben") || sound("quilstone") != sound("quillstone") || sound("pria") != sound("priya") {
+		t.Error("words that sound alike don't")
+	}
+}
+
 // topical is a follow listening with a writer, the made-up library in.
 func topical(t *testing.T) *follow {
 	t.Helper()
