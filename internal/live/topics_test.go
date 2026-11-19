@@ -429,6 +429,63 @@ func TestAQuestionIsAskedOfTheArchiveOnlyWhenItNamesWhatTheArchiveKnows(t *testi
 	}
 }
 
+// A question left to the people in the call asks something: it isn't a
+// statement of fact, to check against the record, even when it holds a
+// figure.
+func TestAQuestionLeftToThePeopleIsntCheckedAsAStatement(t *testing.T) {
+	screen := &logScreen{}
+	archive := &libraryArchive{fakeArchive{brief: func(context.Context, string) (Brief, error) { return quillBrief(), nil },
+		answer: func(context.Context, string) (Found, error) { return Found{}, nil }}}
+	writer := &fakeWriter{write: func(_ context.Context, p Prompt) (string, error) {
+		if p.System == checkSystem {
+			return `{"differs": false}`, nil
+		}
+		return "Not in the archive", nil
+	}}
+	cfg := writingConfig(fast)
+	cfg.Topics, cfg.TopicQuiet, cfg.TopicAgain, cfg.TopicLines, cfg.TopicTokens = true, Defaults.TopicQuiet, Defaults.TopicAgain, Defaults.TopicLines, Defaults.TopicTokens
+	cfg.FirstMinute, cfg.HearShort, cfg.HearLong, cfg.WriteTimeout, cfg.CheckEvery = Defaults.FirstMinute, Defaults.HearShort, Defaults.HearLong, time.Second, 10*time.Millisecond
+	c := Start(cfg, archive, screen, time.Now, nil, map[string]Writer{"local": writer})
+	defer c.Enabled(false)
+	c.Judging("local")
+	c.Enabled(true)
+	c.Capturing("", true)
+	c.Recording(true)
+	waitFor(t, "the standing card", func() bool { p := screen.last(); return len(p.Cards) > 0 && p.Cards[0].Title == "Open items" })
+	say := func(words ...string) {
+		s := Said{Began: time.Now(), Step: 100 * time.Millisecond, Mic: make([]float64, 40), Call: make([]float64, 40)}
+		for i, w := range words {
+			s.Segments = append(s.Segments, Segment{Text: w, At: time.Duration(i) * 300 * time.Millisecond, Length: 250 * time.Millisecond})
+		}
+		c.Said(s)
+	}
+	checks := func() []string {
+		writer.mu.Lock()
+		defer writer.mu.Unlock()
+		var out []string
+		for _, p := range writer.prompts {
+			if p.System == checkSystem {
+				out = append(out, p.User)
+			}
+		}
+		return out
+	}
+	// The archive's lines about a name said are kept to check what is
+	// said against.
+	say("so", "Quillstone", "then.")
+	waitFor(t, "the card about the name", func() bool { p := screen.last(); return len(p.Cards) > 0 && p.Cards[0].Title == "Quillstone" })
+	say("did", "they", "order", "the", "$400", "glaze", "kit?")
+	say("they", "ordered", "the", "$400", "glaze", "kit.")
+	waitFor(t, "a check of the statement", func() bool {
+		return slices.ContainsFunc(checks(), func(u string) bool { return strings.Contains(u, "they ordered the $400 glaze kit.") })
+	})
+	for _, u := range checks() {
+		if strings.Contains(u, "did they order") {
+			t.Fatalf("a question left to the people in the call was checked as a statement:\n%s", u)
+		}
+	}
+}
+
 func TestACardPushedOffThePanelDoesntComeBack(t *testing.T) {
 	f := topical(t)
 	f.panel(t0)

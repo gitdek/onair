@@ -350,12 +350,14 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 	for _, said := range append(finished, f.flush(now)...) {
 		c.heardNames(f, said.text, true, now)
 		q, ok := notice(said)
-		if ok && !f.asksArchive(q, said.text) {
-			c.log("a question of %d words names nothing the archive knows, so it is left to the people in the call", len(strings.Fields(q.topic)))
-			ok = false
-		}
 		if !ok {
 			f.state(said)
+			continue
+		}
+		if !f.asksArchive(q, said.text) {
+			// Left to the people in the call, it still asks something,
+			// and is no statement to check against the record.
+			c.log("a question of %d words names nothing the archive knows, so it is left to the people in the call", len(strings.Fields(q.topic)))
 			continue
 		}
 		who := map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who]
