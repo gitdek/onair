@@ -1,0 +1,6 @@
+{
+  "name": "recording disk guard",
+  "module": ".invariant/specs/DiskGuard.tla",
+  "code": "diskguard",
+  "language": "go"
+}
