@@ -25,13 +25,22 @@ var (
 	// A passage of a transcript is its meeting's date and title, its
 	// moment, and what was said in quotation marks.
 	passage = regexp.MustCompile(`^- (\d{4}-\d{2}-\d{2}) (.+), \[([^\]]+)\]\(([^)\s]+)\): "(.*)"$`)
+	// A notebook entry's line under its title: who wrote it, the date,
+	// its tags and its link, in italics.
+	entryLine = regexp.MustCompile(`^_.*?(\d{4}-\d{2}-\d{2}).*?(https?://\S+?)_$`)
+	// A link in markdown, whose words are kept and whose target isn't.
+	markdownLink = regexp.MustCompile(`\[([^\]]*)\]\([^)\s]*\)`)
+	bareLink     = regexp.MustCompile(`https?://\S+`)
 )
 
 // points reads the lines of a brief that come from meetings: each bullet
 // of a meeting's notes, with the moment it cites, or its topic's when it
-// cites none, or else the meeting; and each passage of the transcripts.
-// What the board says about an action item, the board's other items,
-// documents and the notebook are left out: none is a moment in a meeting.
+// cites none, or else the meeting, and where it stands on the board when
+// it is an action item; each passage of the transcripts; and each line
+// the brief quotes of a notebook entry, marked as such, with the entry's
+// link, and the words of any link in it without where it leads. What the
+// board says about an action item, the board's other items and documents
+// are left out: none is a moment in a meeting.
 func points(brief string) []live.Point {
 	var out []live.Point
 	var section, date, title, link, heading string
@@ -46,6 +55,12 @@ func points(brief string) []live.Point {
 				section, date, title = "meeting", m[1], m[2]
 			} else if strings.HasPrefix(l, "## What was said") {
 				section = "said"
+			} else if strings.HasPrefix(l, "## Notebook") {
+				section, title, date = "notebook", "", ""
+			}
+		case section == "notebook":
+			if p, ok := entry(l, &title, &date, &link); ok {
+				out = append(out, p)
 			}
 		case section == "said":
 			if m := passage.FindStringSubmatch(l); m != nil {
@@ -79,8 +94,10 @@ func points(brief string) []live.Point {
 				continue
 			}
 			topic = nil
-			text, action = trimStanding(text)
-			out = append(out, live.Point{Text: text, Under: heading, Meeting: title, Date: date, At: at, URL: url})
+			var standing string
+			text, standing = trimStanding(text)
+			action = standing != ""
+			out = append(out, live.Point{Text: text, Under: heading, Meeting: title, Date: date, At: at, URL: url, Standing: standing})
 		}
 	}
 	return out
@@ -103,10 +120,49 @@ func cut(l string) (text, at, url string) {
 }
 
 // trimStanding takes where an action item stands on the board off its
-// line, and says whether it was one.
-func trimStanding(text string) (string, bool) {
-	if loc := standing.FindStringIndex(text); loc != nil {
-		return text[loc[1]:], true
+// line, and says where it stands: "open", "on hold", "done" or
+// "canceled", or nothing when it isn't one.
+func trimStanding(text string) (string, string) {
+	m := standing.FindStringSubmatch(text)
+	if m == nil {
+		return text, ""
 	}
-	return text, false
+	where := m[1]
+	switch {
+	case strings.HasPrefix(where, "done"):
+		where = "done"
+	case strings.HasPrefix(where, "canceled"):
+		where = "canceled"
+	case strings.Contains(where, "on hold"):
+		where = "on hold"
+	}
+	return text[len(m[0]):], where
+}
+
+// entry reads a line of the brief's notebook: an entry's title, the line
+// under it that dates and links it, or a line it quotes, which it returns
+// as a point of that entry. A quoted heading, an empty quote and anything
+// before the entry's link is known are left out.
+func entry(l string, title, date, link *string) (live.Point, bool) {
+	switch {
+	case strings.HasPrefix(l, "### "):
+		*title, *date, *link = strings.TrimPrefix(l, "### "), "", ""
+	case entryLine.MatchString(l):
+		m := entryLine.FindStringSubmatch(l)
+		*date, *link = m[1], m[2]
+	case strings.HasPrefix(l, ">") && *link != "":
+		text := strings.TrimSpace(strings.TrimPrefix(l, ">"))
+		if strings.HasPrefix(text, "#") {
+			return live.Point{}, false
+		}
+		text = strings.TrimSpace(strings.TrimPrefix(text, "- "))
+		text = markdownLink.ReplaceAllString(text, "$1")
+		text = bareLink.ReplaceAllString(text, "")
+		text = strings.Join(strings.Fields(strings.ReplaceAll(text, "**", "")), " ")
+		if len([]rune(text)) < 12 {
+			return live.Point{}, false
+		}
+		return live.Point{Text: text, Meeting: *title, Date: *date, URL: *link, Under: "notebook", Notebook: true}, true
+	}
+	return live.Point{}, false
 }

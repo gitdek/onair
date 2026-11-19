@@ -58,25 +58,44 @@ type Controller struct {
 	writings chan writing
 	writes   atomic.Int32 // answers, checks and rewordings the writer hasn't returned
 
+	libraries chan library
+	fetches   atomic.Int32 // questions about a card's name not yet returned
+
 	// cancels give up on the questions to On the Record still out, by
 	// card, for one asked early that is no longer wanted. Only run uses
 	// it.
 	cancels map[int]context.CancelFunc
 }
 
-// writing is what the writer wrote: an answer for a card, or a check.
+// writing is what the writer wrote: an answer for a card, a check, a
+// question's other words, or a card about a name.
 type writing struct {
-	card, check, reword int
-	text                string
-	err                 error
-	took                time.Duration
+	card, check, reword, topic int
+	text                       string
+	err                        error
+	took                       time.Duration
 }
 
+// reply is On the Record's answer about a card's question, or, for topic,
+// about a card's name.
 type reply struct {
 	card  int
+	topic bool
 	brief Brief
 	err   error
 	took  time.Duration
+}
+
+// library is the archive's lists, as they came back.
+type library struct {
+	lib  Library
+	err  error
+	took time.Duration
+}
+
+// Librarian is what an Archive may also do: give what its lists hold.
+type Librarian interface {
+	Library(ctx context.Context) (Library, error)
 }
 
 type verdict struct {
@@ -105,7 +124,7 @@ type answer struct {
 func Start(cfg Config, archive Archive, screen Screen, now func() time.Time, judges map[string]Judge, writers map[string]Writer) *Controller {
 	c := &Controller{cfg: cfg, archive: archive, screen: screen, now: now, judges: judges, writers: writers,
 		wake: make(chan struct{}, 1), answers: make(chan answer, inFlight+1), verdicts: make(chan verdict, inFlight+1), replies: make(chan reply, inFlight+1),
-		writings: make(chan writing, inFlight+1), cancels: map[int]context.CancelFunc{}}
+		writings: make(chan writing, inFlight+1), cancels: map[int]context.CancelFunc{}, libraries: make(chan library, 1)}
 	go c.run()
 	return c
 }
@@ -224,6 +243,7 @@ func (c *Controller) run() {
 		var judged *verdict
 		var replied *reply
 		var wrote *writing
+		var listed *library
 		select {
 		case <-c.wake:
 		case <-t.C:
@@ -235,8 +255,10 @@ func (c *Controller) run() {
 			replied = &r
 		case w := <-c.writings:
 			wrote = &w
+		case l := <-c.libraries:
+			listed = &l
 		}
-		err := c.step(f, got, judged, replied, wrote, s)
+		err := c.step(f, got, judged, replied, wrote, listed, s)
 		if err == nil {
 			continue
 		}
@@ -270,7 +292,7 @@ type sent struct {
 	shows     string // what the diagnostic log last said the panel shows
 }
 
-func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *reply, wrote *writing, s *sent) (err error) {
+func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *reply, wrote *writing, listed *library, s *sent) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%v", r)
@@ -305,6 +327,19 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		all, mine := f.words()
 		c.log("heard %d pieces, %d words yours and %d others, listening %t; the window holds %d words, %d yours", len(heard), person, others, f.listening(), all, mine)
 	}
+	if listed != nil {
+		f.library(listed.lib, listed.err, now)
+		switch {
+		case listed.err != nil:
+			c.log("the archive's lists failed after %s: %s", listed.took.Round(time.Millisecond), brief(listed.err))
+		case f.roster != nil:
+			c.log("the archive's lists came in %s: %s", listed.took.Round(time.Millisecond), f.roster.counts())
+		}
+	}
+	if f.listening() && f.listenedAt.IsZero() {
+		f.listenedAt = now
+		f.standingCard(now)
+	}
 	var finished []utterance
 	for _, s := range results {
 		finished = append(finished, f.recognized(s)...)
@@ -313,9 +348,16 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		c.log("%s", r)
 	}
 	for _, said := range append(finished, f.flush(now)...) {
+		c.heardNames(f, said.text, true, now)
 		q, ok := notice(said)
 		if !ok {
 			f.state(said)
+			continue
+		}
+		if !f.asksArchive(q, said.text) {
+			// Left to the people in the call, it still asks something,
+			// and is no statement to check against the record.
+			c.log("a question of %d words names nothing the archive knows, so it is left to the people in the call", len(strings.Fields(q.topic)))
 			continue
 		}
 		who := map[Speaker]string{Person: "yours", Others: "someone else's"}[q.who]
@@ -334,11 +376,16 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			}
 		}
 	}
-	// A question still being asked is asked early.
+	// A question still being asked is asked early, and a name in the
+	// sentence being said gets its card at once.
 	g, asks := f.stream.growing()
+	if asks {
+		c.heardNames(f, g.text, false, now)
+	}
 	var q question
 	if asks {
 		q, asks = notice(g)
+		asks = asks && f.asksArchive(q, g.text)
 	}
 	if started, dropped := f.early(q, asks, now); started != 0 || dropped != 0 {
 		if dropped != 0 {
@@ -353,6 +400,18 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			cancel()
 			delete(c.cancels, n)
 		}
+	}
+	if replied != nil && replied.topic {
+		notes, taken := f.topicFetched(replied.card, replied.brief, replied.err, now)
+		switch {
+		case !taken:
+			c.log("topic card %d: On the Record's answer came after %s, too late to be taken", replied.card, replied.took.Round(time.Millisecond))
+		case replied.err != nil:
+			c.log("topic card %d: asking On the Record failed after %s: %s", replied.card, replied.took.Round(time.Millisecond), brief(replied.err))
+		default:
+			c.log("topic card %d: On the Record answered in %s: %d lines, %d of them notes for the local model", replied.card, replied.took.Round(time.Millisecond), len(replied.brief.Points), notes)
+		}
+		replied = nil
 	}
 	if replied != nil {
 		early := f.card(replied.card) != nil && f.card(replied.card).early
@@ -469,6 +528,20 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 	if n := f.abandonCheck(now); n != 0 {
 		c.log("check %d given up on after %s", n, now.Sub(f.checked).Round(time.Millisecond))
 	}
+	if n := f.abandonTopicFetch(now); n != 0 {
+		c.log("topic card %d: On the Record given up on after %s", n, now.Sub(f.fetchAsked).Round(time.Millisecond))
+	}
+	if n := f.abandonTopicWrite(now); n != 0 {
+		c.log("topic card %d: the local model given up on after %s", n, now.Sub(f.topicAsked).Round(time.Millisecond))
+	}
+	if f.libraryDue(now) {
+		if l, ok := c.archive.(Librarian); ok {
+			c.log("the archive's lists asked for")
+			c.library(l)
+		} else {
+			f.libAsking = false
+		}
+	}
 	if listening := f.listening(); listening != s.listening {
 		c.log("listen %t", listening)
 		c.screen.Listen(listening, c.cfg.Chunk)
@@ -486,6 +559,12 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 			c.write(writer, p, writing{reword: n})
 		}
 	}
+	if c.fetches.Load() < 1 {
+		if ask, n, ok := f.topicFetchDue(now); ok {
+			c.log("topic card %d: On the Record asked, %d words", n, len(strings.Fields(ask)))
+			c.fetchTopic(ask, n)
+		}
+	}
 	if c.answering.Load() < inFlight {
 		if topic, n, ok := f.answerDue(now); ok {
 			cd := f.card(n)
@@ -497,6 +576,9 @@ func (c *Controller) step(f *follow, got *answer, judged *verdict, replied *repl
 		if p, n, ok := f.writeDue(now); ok {
 			c.log("write %d asked: %d passages, about %d tokens", n, strings.Count(p.User, "\n["), tokens(p.System+p.User))
 			c.write(writer, p, writing{card: n})
+		} else if p, n, ok := f.topicWriteDue(now); ok {
+			c.log("topic card %d: the local model asked, %d notes, about %d tokens", n, strings.Count(p.User, "\n["), tokens(p.System+p.User))
+			c.write(writer, p, writing{topic: n})
 		} else if p, n, said, records, ok := f.checkDue(now); ok {
 			c.log("check %d asked: %d statements, %d records, about %d tokens", n, said, records, tokens(p.System+p.User))
 			c.write(writer, p, writing{check: n})
@@ -586,6 +668,71 @@ func (c *Controller) answer(topic string, card int) {
 	}()
 }
 
+// heardNames takes the names the archive knows in what was said, and logs
+// what came of each, in counts only.
+func (c *Controller) heardNames(f *follow, text string, finished bool, now time.Time) {
+	for _, h := range f.heardNames(text, finished, now) {
+		kind := map[bool]string{true: "a person", false: "a project or company"}[h.person]
+		how := map[bool]string{true: "a finished sentence", false: "a sentence still being said"}[finished]
+		if h.again {
+			c.log("topic card %d started: %s came back in %s with something else said about it", h.card, kind, how)
+			continue
+		}
+		c.log("topic card %d started: %s heard in %s, %s from the archive's lists shown at once", h.card, kind, how, plural(h.lines, "line"))
+	}
+}
+
+// library asks the archive for its lists on a goroutine of its own, for
+// at most c.cfg.Timeout, and hands them back to run, as ask does.
+func (c *Controller) library(l Librarian) {
+	go func() {
+		out := library{}
+		began := c.now()
+		defer func() {
+			if r := recover(); r != nil {
+				out.lib, out.err = Library{}, fmt.Errorf("asking On the Record failed: %v", r)
+			}
+			out.took = c.now().Sub(began)
+			select {
+			case c.libraries <- out:
+			default:
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
+		defer cancel()
+		out.lib, out.err = l.Library(ctx)
+	}()
+}
+
+// fetchTopic asks On the Record about a card's name on a goroutine of its
+// own, for at most c.cfg.Timeout, and hands the reply back to run, as ask
+// does.
+func (c *Controller) fetchTopic(ask string, card int) {
+	c.fetches.Add(1)
+	go func() {
+		r := reply{card: card, topic: true}
+		began := c.now()
+		defer func() {
+			if p := recover(); p != nil {
+				r.brief, r.err = Brief{}, fmt.Errorf("asking On the Record failed: %v", p)
+			}
+			r.took = c.now().Sub(began)
+			c.fetches.Add(-1)
+			select {
+			case c.replies <- r:
+			default:
+			}
+		}()
+		if c.archive == nil {
+			r.err = errors.New("On Air has no address for On the Record")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.cfg.Timeout)
+		defer cancel()
+		r.brief, r.err = c.archive.Answer(ctx, ask, false)
+	}()
+}
+
 // round asks a judge on a goroutine of its own, for at most
 // c.cfg.JudgeTimeout, and hands the verdict back to run, as ask does.
 func (c *Controller) round(judge Judge, r Round, round int) {
@@ -612,6 +759,25 @@ func (c *Controller) round(judge Judge, r Round, round int) {
 // and On Air's own words: never what was asked or written.
 func (c *Controller) wrote(f *follow, w *writing, now time.Time) {
 	took := w.took.Round(time.Millisecond)
+	if w.topic != 0 {
+		kept, left, why, taken := f.topicWritten(w.topic, w.text, w.err, now)
+		switch {
+		case !taken:
+			c.log("topic card %d: the local model came back after %s, too late to be taken", w.topic, took)
+		case w.err != nil:
+			c.log("topic card %d: the local model failed after %s: %s", w.topic, took, why)
+		default:
+			came := fmt.Sprintf("%s kept, %d left out", plural(kept, "line"), left)
+			if why != "" {
+				came += ", the first because " + why
+			}
+			c.log("topic card %d: the local model wrote in %s: %s; so far %d cards about names started, %d written", w.topic, took, came, f.topicsStarted, f.topicsWritten)
+			if tc := f.tcard(w.topic); tc != nil {
+				c.log("%s", f.topicLog(tc, now))
+			}
+		}
+		return
+	}
 	if w.reword != 0 {
 		added, failed, taken := f.reworded(w.reword, w.text, w.err, now)
 		switch {

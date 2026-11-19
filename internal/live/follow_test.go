@@ -10,6 +10,15 @@ import (
 
 var t0 = time.Date(2026, 11, 14, 15, 0, 0, 0, time.UTC)
 
+// linked is Defaults with links to what the last minute connects to asked
+// for every 15 seconds, as they were before cards about names replaced
+// them.
+var linked = func() Config {
+	c := Defaults
+	c.Every = 15 * time.Second
+	return c
+}()
+
 // at is t0 plus some seconds.
 func at(s float64) time.Time { return t0.Add(time.Duration(s * float64(time.Second))) }
 
@@ -27,7 +36,7 @@ func words(n int, word string) string {
 }
 
 func TestNothingIsHeardUnlessOnAndRecording(t *testing.T) {
-	f := newFollow(Defaults)
+	f := newFollow(linked)
 	f.hear(Heard{Speaker: Person, Text: "not on", To: t0}, t0)
 	f.enable(true)
 	f.hear(Heard{Speaker: Person, Text: "not recording", To: t0}, t0)
@@ -50,7 +59,7 @@ func TestNothingIsHeardUnlessOnAndRecording(t *testing.T) {
 }
 
 func TestTheWindowKeepsTheLastMinute(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	for s := 0; s <= 90; s += 15 {
 		f.hear(Heard{Speaker: Others, Text: fmt.Sprintf("said at %d", s), From: at(float64(s) - 14), To: at(float64(s))}, at(float64(s)))
 	}
@@ -60,7 +69,7 @@ func TestTheWindowKeepsTheLastMinute(t *testing.T) {
 }
 
 func TestTheWindowKeepsTheNewestWordsWhenItIsFull(t *testing.T) {
-	cfg := Defaults
+	cfg := linked
 	cfg.Chars = 40
 	f := listening(cfg)
 	f.hear(Heard{Speaker: Others, Text: "one two three four five six seven", To: at(1)}, at(1))
@@ -76,7 +85,7 @@ func TestTheWindowKeepsTheNewestWordsWhenItIsFull(t *testing.T) {
 }
 
 func TestTimesThatCantBeRightAreTakenAsNow(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.hear(Heard{Speaker: Person, Text: "no time"}, at(5))
 	f.hear(Heard{Speaker: Person, Text: "in 1970", From: time.Unix(1, 0), To: time.Unix(2, 0)}, at(6))
 	f.hear(Heard{Speaker: Person, Text: "next week", To: at(7 * 24 * 3600)}, at(7))
@@ -95,7 +104,7 @@ func TestTimesThatCantBeRightAreTakenAsNow(t *testing.T) {
 }
 
 func TestTheTextHoldsBothSpeakersInTheOrderTheySpoke(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	// Each sound's words come when its own request ends, so later words
 	// can come first.
 	f.hear(Heard{Speaker: Person, Text: "  shall we  move\nthe launch ", From: at(20), To: at(24)}, at(25))
@@ -109,11 +118,11 @@ func TestTheTextHoldsBothSpeakersInTheOrderTheySpoke(t *testing.T) {
 }
 
 func TestAQuestionWaitsForWordsAndForItsTime(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	if _, _, ok := f.due(at(1)); ok {
 		t.Fatal("asked with nothing said")
 	}
-	f.hear(Heard{Speaker: Others, Text: words(Defaults.Least-1, "word"), To: at(15)}, at(15))
+	f.hear(Heard{Speaker: Others, Text: words(linked.Least-1, "word"), To: at(15)}, at(15))
 	if _, _, ok := f.due(at(15)); ok {
 		t.Fatal("asked with too few words")
 	}
@@ -157,7 +166,7 @@ func strong(ids ...string) Found {
 // asked has f ask, at a time, with something new said first.
 func asked(t *testing.T, f *follow, now time.Time) int {
 	t.Helper()
-	f.hear(Heard{Speaker: Others, Text: words(Defaults.Least, "word"), To: now}, now)
+	f.hear(Heard{Speaker: Others, Text: words(linked.Least, "word"), To: now}, now)
 	_, ask, ok := f.due(now)
 	if !ok {
 		t.Fatalf("no question at %v", now)
@@ -174,7 +183,7 @@ func titles(links []Link) string {
 }
 
 func TestNewLinksGoOnTopAndNoneComesBackForAWhile(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.answer(asked(t, f, at(15)), strong("m1", "m2"), nil, at(15))
 	if got := titles(f.panel(at(15)).Links); got != "Meeting m1, Meeting m2" {
 		t.Fatalf("the panel shows %s", got)
@@ -197,7 +206,7 @@ func TestNewLinksGoOnTopAndNoneComesBackForAWhile(t *testing.T) {
 }
 
 func TestAFailedQuestionIsSaidAndTheLinksStay(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.answer(asked(t, f, at(15)), strong("m1"), nil, at(15))
 	f.answer(asked(t, f, at(30)), Found{}, errors.New("On the Record isn't answering on this Mac. Is its server running?"), at(30))
 	p := f.panel(at(30))
@@ -211,15 +220,15 @@ func TestAFailedQuestionIsSaidAndTheLinksStay(t *testing.T) {
 }
 
 func TestAnAnswerNothingWaitsForIsDropped(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	first := asked(t, f, at(15))
 	// No answer within the time a question may take, and a second more:
 	// it is given up on, and the next question can be asked.
-	f.abandon(at(15).Add(Defaults.Timeout))
+	f.abandon(at(15).Add(linked.Timeout))
 	if f.asking == 0 {
 		t.Fatal("a question was given up on before its time")
 	}
-	f.abandon(at(15).Add(Defaults.Timeout + 1001*time.Millisecond))
+	f.abandon(at(15).Add(linked.Timeout + 1001*time.Millisecond))
 	if p := f.panel(at(20)); !strings.Contains(p.Status, "didn't answer within 10s") {
 		t.Fatalf("a question given up on shows %q", p.Status)
 	}
@@ -238,7 +247,7 @@ func TestAnAnswerNothingWaitsForIsDropped(t *testing.T) {
 }
 
 func TestThePanelShowsWhileOnAndRecording(t *testing.T) {
-	f := newFollow(Defaults)
+	f := newFollow(linked)
 	if p := f.panel(t0); p.Visible {
 		t.Fatal("the panel shows before Live Context is on")
 	}
@@ -269,7 +278,7 @@ func TestThePanelShowsWhileOnAndRecording(t *testing.T) {
 }
 
 func TestThePanelStaysAWhileAfterTheRecordingWithItsLinks(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.record(false, at(10))
 	if p := f.panel(at(10)); p.Visible {
 		t.Fatal("a panel with no links stays after the recording")
@@ -291,7 +300,7 @@ func TestThePanelStaysAWhileAfterTheRecordingWithItsLinks(t *testing.T) {
 }
 
 func TestWhatGoesWrongIsSaidInThePanel(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	f.report(SpeechRefused, "it was refused", t0)
 	p := f.panel(t0)
 	if !p.Visible || p.Status != "Live Context can't listen: speech recognition isn't allowed (it was refused). Allow On Air in System Settings, Privacy & Security, Speech Recognition, then start a new recording." {
@@ -337,7 +346,7 @@ func TestWhatGoesWrongIsSaidInThePanel(t *testing.T) {
 }
 
 func TestTheHeadlineSaysWhatTheLiveSideDid(t *testing.T) {
-	f := listening(Defaults)
+	f := listening(linked)
 	if got := f.panel(t0).Headline; got != "Speech: no answer yet · last minute: 0 words yours, 0 others · not asked yet" {
 		t.Fatalf("at first the headline says %q", got)
 	}
@@ -363,7 +372,7 @@ func TestTheHeadlineSaysWhatTheLiveSideDid(t *testing.T) {
 		t.Fatalf("after a failed question the headline says %q", got)
 	}
 	asked(t, f, at(90))
-	f.abandon(at(90).Add(Defaults.Timeout + 2*time.Second))
+	f.abandon(at(90).Add(linked.Timeout + 2*time.Second))
 	if got := f.panel(at(102)).Headline; !strings.HasSuffix(got, " · asked 10 s ago: no answer within 10s") {
 		t.Fatalf("after a question given up on the headline says %q", got)
 	}

@@ -1,13 +1,13 @@
-// Package archive asks On the Record, the meeting archive, what a stretch
-// of a call connects to, through its read-only door on this Mac. It speaks
-// MCP, JSON-RPC over HTTP, to a loopback address only: it refuses any
-// other, dials nothing else, uses no proxy and follows no redirect, so
-// nothing it sends leaves the Mac. It calls two tools, which only read:
-// find_connections, and gather_context, which it never asks for the
-// screen's moments, which the archive's owners may have a hosted model
-// match, and asks only in plain words, never in the filters its search
-// reads, such as in:screen. It decides nothing: what to make of the answer
-// is internal/live's.
+// Package archive asks On the Record, the meeting archive, what it holds
+// about a call, through its read-only door on this Mac. It speaks MCP,
+// JSON-RPC over HTTP, to a loopback address only: it refuses any other,
+// dials nothing else, uses no proxy and follows no redirect, so nothing it
+// sends leaves the Mac. It calls five tools, which only read: its lists,
+// list_meetings, list_action_items and list_notes; find_connections; and
+// gather_context, which it never asks for the screen's moments, which the
+// archive's owners may have a hosted model match, and asks only in plain
+// words, never in the filters its search reads, such as in:screen. It
+// decides nothing: what to make of the answer is internal/live's.
 package archive
 
 import (

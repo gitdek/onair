@@ -39,8 +39,15 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "replay" {
+		if err := replayCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "replay failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 {
-		fmt.Fprintln(os.Stderr, "usage: onair [selftest [-keep] [mix | TRACKS]]")
+		fmt.Fprintln(os.Stderr, "usage: onair [selftest [-keep] [mix | TRACKS] | replay [-as NAME] [-speed N] [-lose SHARE] [-models=false] [-report NAME,NAME] TRANSCRIPT.json]")
 		os.Exit(2)
 	}
 	home, err := os.UserHomeDir()
@@ -116,23 +123,20 @@ func (screen) Log(line string)                     { diag.Printf("%s", line) }
 func (screen) Listen(on bool, chunk time.Duration) { mac.Listen(on, chunk.Seconds()) }
 
 func (screen) Show(p live.Panel) {
-	var links []mac.Link
-	for _, l := range p.Links {
-		links = append(links, mac.Link{Kind: l.Kind.String(), Title: l.Title, Date: l.Date, Why: l.Why, URL: l.URL})
-	}
-	var answers []mac.Answer
-	for _, a := range p.Answers {
-		answer := mac.Answer{Question: a.Question, Text: a.Text, Note: a.Note}
-		for _, l := range a.Sources {
-			answer.Sources = append(answer.Sources, mac.AnswerLine{Text: l.Text, Where: l.Where, URL: l.URL})
+	var cards []mac.Card
+	for _, c := range p.Cards {
+		card := mac.Card{Title: c.Title, Note: c.Note}
+		for _, l := range c.Lines {
+			line := mac.CardLine{Text: l.Text}
+			for _, s := range l.Sources {
+				line.Sources = append(line.Sources, mac.Source{Label: s.Label, URL: s.URL})
+			}
+			card.Lines = append(card.Lines, line)
 		}
-		for _, l := range a.Lines {
-			answer.Lines = append(answer.Lines, mac.AnswerLine{Text: l.Text, Where: l.Where, URL: l.URL})
-		}
-		answers = append(answers, answer)
+		cards = append(cards, card)
 	}
 	differs := mac.AnswerLine{Text: p.Differs.Text, Where: p.Differs.Where, URL: p.Differs.URL}
-	mac.ShowPanel(p.Visible, p.Display, p.Headline, p.Status, p.Calls, differs, answers, links)
+	mac.ShowPanel(p.Visible, p.Display, p.Status, p.Calls, differs, cards)
 }
 
 // bridge is the recorder and the live side, as the Mac reports things to

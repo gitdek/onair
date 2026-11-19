@@ -185,7 +185,7 @@ func keysOf(words []string, from int) []key {
 			continue
 		}
 		seen[id] = len(out)
-		out = append(out, key{stem: s, weight: weight})
+		out = append(out, key{stem: s, weight: weight, word: b})
 	}
 	return out
 }
@@ -324,7 +324,7 @@ func answerLines(q question, b Brief, n int) []AnswerLine {
 	var all []scored
 	best, newest := 0.0, ""
 	for _, p := range b.Points {
-		if strings.TrimSpace(p.Text) == "" || !openable(p.URL) {
+		if strings.TrimSpace(p.Text) == "" || !openable(p.URL) || p.Notebook {
 			continue
 		}
 		if r := q.relevance(p); r >= Enough {
