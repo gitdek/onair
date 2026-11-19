@@ -199,6 +199,14 @@ void onair_live_listen(int on, double chunk);
 // answer cards, a row each, and links. Any thread may call it.
 void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
                      const onair_link *links, int count);
+// For tests, whose main thread runs nothing else. TestRunMain runs the
+// main thread's run loop for at most seconds, so that what was handed to
+// the main queue runs; only the main thread may call it. TestWaitMain
+// waits, on any other thread, until all that was handed to the main queue
+// before has run. TestMallocInUse is how many bytes malloc holds.
+void onair_test_run_main(double seconds);
+void onair_test_wait_main(void);
+long onair_test_malloc_in_use(void);
 // Quit ends the app.
 void onair_quit(void);
 

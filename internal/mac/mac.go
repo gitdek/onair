@@ -571,6 +571,15 @@ func frameSize(width, height, scale float64, rows int) (int, int) {
 	return int(w), int(h)
 }
 
+// For tests, whose main thread runs nothing else. runMain runs the main
+// thread's run loop for at most seconds, so that what the Mac's code hands
+// the main queue runs; only the main thread may call it. waitMain waits
+// until all that was handed to the main queue before has run. mallocInUse
+// is how many bytes malloc holds.
+func runMain(seconds float64) { C.onair_test_run_main(C.double(seconds)) }
+func waitMain()               { C.onair_test_wait_main() }
+func mallocInUse() int64      { return int64(C.onair_test_malloc_in_use()) }
+
 // A buffer of one of the two sounds, given to speechMix: the sound, 0 the
 // call's and 1 the microphone's, the frame its stamp puts it at, and its
 // frames.

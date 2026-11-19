@@ -4,9 +4,29 @@ package mac
 
 import (
 	"math"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+// The main goroutine keeps the main thread, as On Air's does, and runs
+// what the Mac's code hands the main queue while the tests run.
+func init() { runtime.LockOSThread() }
+
+func TestMain(m *testing.M) {
+	code := make(chan int, 1)
+	go func() { code <- m.Run() }()
+	for {
+		select {
+		case c := <-code:
+			os.Exit(c)
+		default:
+			runMain(0.01)
+		}
+	}
+}
 
 // The picture keeps its content's shape, at most the rows asked for, with
 // even sides.
@@ -142,5 +162,37 @@ func TestACardsWordComesBeforeTheLinesItIntroduces(t *testing.T) {
 	}
 	if r := rows[3]; r.where != "Weekly · 2026-10-21 · 8:40" || r.link != "https://archive.example/m/c?t=520" {
 		t.Fatalf("the line's row is %+v", r)
+	}
+}
+
+// Go asks the panel to show something from threads of its own, which have
+// no autorelease pool, and the panel changes many times a meeting. What
+// each change is made of must be let go once the panel has shown it, so
+// five thousand changes leave malloc holding no more than before.
+func TestThePanelLetsGoOfWhatItShowed(t *testing.T) {
+	long := strings.Repeat("a line of the notes, ", 40)
+	show := func() {
+		ShowPanel(false, "display", long, long, []string{long, long}, AnswerLine{Text: long, Where: long, URL: "https://archive.example/m/a"},
+			[]Answer{{Question: long, Note: long, Lines: []AnswerLine{{Text: long, Where: long, URL: "https://archive.example/m/b"}}},
+				{Question: long, Text: long, Sources: []AnswerLine{{Text: long, URL: "https://archive.example/m/c"}}}},
+			[]Link{{Kind: "Meeting", Title: long, Date: "2026-11-03", Why: long, URL: "https://archive.example/m/d"}})
+	}
+	grew := make(chan int64)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		show()
+		waitMain()
+		before := mallocInUse()
+		for range 5000 {
+			show()
+		}
+		waitMain()
+		// What the main queue let go of may take a moment to be freed.
+		time.Sleep(100 * time.Millisecond)
+		grew <- mallocInUse() - before
+	}()
+	if n := <-grew; n > 1<<20 {
+		t.Fatalf("after five thousand changes of the panel, malloc holds %d KB more", n>>10)
 	}
 }

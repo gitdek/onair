@@ -4,6 +4,7 @@
 #import "speechmix.h"
 #import <AVFoundation/AVFoundation.h>
 #import <Speech/Speech.h>
+#import <malloc/malloc.h>
 #import <stdatomic.h>
 #import "_cgo_export.h"
 
@@ -834,6 +835,20 @@ void onair_live_ask(void) {
         }
         say(status == SFSpeechRecognizerAuthorizationStatusAuthorized ? ONAIR_LIVE_ALLOWED : ONAIR_LIVE_REFUSED, status == SFSpeechRecognizerAuthorizationStatusAuthorized ? @"" : OARefusal(status));
     });
+}
+
+void onair_test_run_main(double seconds) {
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+}
+
+void onair_test_wait_main(void) {
+    dispatch_sync(dispatch_get_main_queue(), ^{});
+}
+
+long onair_test_malloc_in_use(void) {
+    malloc_statistics_t stats;
+    malloc_zone_statistics(NULL, &stats);
+    return (long)stats.size_in_use;
 }
 
 // Go calls onair_live_show from one goroutine, in order, and each call
