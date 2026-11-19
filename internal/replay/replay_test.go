@@ -32,6 +32,20 @@ func TestAWhisperTranscriptIsReadWithItsWordTimes(t *testing.T) {
 	}
 }
 
+// A word whose times can't be in a meeting of a day at most is left out,
+// rather than read as a time no clock can hold.
+func TestATranscriptsWordsAtTimesThatCantBeAreLeftOut(t *testing.T) {
+	words, err := ReadWhisper(strings.NewReader(`{"segments": [{"words": [
+		{"word": " one", "start": 1.0, "end": 1.5},
+		{"word": " never", "start": 1e12, "end": 5},
+		{"word": " before", "start": -1, "end": 2},
+		{"word": " after", "start": 2, "end": 1e9},
+		{"word": " two", "start": 2.0, "end": 2.5}]}]}`))
+	if err != nil || len(words) != 2 || words[0].Text != "one" || words[1].Text != "two" {
+		t.Fatalf("read %+v, %v", words, err)
+	}
+}
+
 func TestRecognitionHandsOverPartialResultsBehindTheSoundAndAFinalWithTimes(t *testing.T) {
 	words, _ := ReadWhisper(strings.NewReader(whisper))
 	start := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)

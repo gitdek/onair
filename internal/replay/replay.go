@@ -44,8 +44,10 @@ func ReadWhisper(r io.Reader) ([]Word, error) {
 	var out []Word
 	for _, s := range t.Segments {
 		for _, w := range s.Words {
+			// A meeting lasts a day at most: a time outside it is no
+			// word's, and wouldn't fit a time.Duration either.
 			text := strings.TrimSpace(w.Word)
-			if text == "" || w.Start < 0 || w.End > 24*3600 {
+			if text == "" || w.Start < 0 || w.Start > 24*3600 || w.End > 24*3600 {
 				continue
 			}
 			from := time.Duration(w.Start * float64(time.Second))
