@@ -859,35 +859,41 @@ static long panelsDone; // on the main thread
 
 void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
                      const onair_link *links, int count) {
-    NSMutableArray<NSDictionary<NSString *, NSString *> *> *rows = [NSMutableArray array];
-    for (int i = 0; i < answerCount; i++) {
-        [rows addObject:@{
-            @"kind" : [NSString stringWithUTF8String:answers[i].kind ?: ""] ?: @"",
-            @"text" : [NSString stringWithUTF8String:answers[i].text ?: ""] ?: @"",
-            @"where" : [NSString stringWithUTF8String:answers[i].where ?: ""] ?: @"",
-            @"link" : [NSString stringWithUTF8String:answers[i].link ?: ""] ?: @"",
-        }];
-    }
-    NSMutableArray<NSDictionary<NSString *, NSString *> *> *list = [NSMutableArray array];
-    for (int i = 0; i < count; i++) {
-        [list addObject:@{
-            @"kind" : [NSString stringWithUTF8String:links[i].kind ?: ""] ?: @"",
-            @"title" : [NSString stringWithUTF8String:links[i].title ?: ""] ?: @"",
-            @"date" : [NSString stringWithUTF8String:links[i].date ?: ""] ?: @"",
-            @"why" : [NSString stringWithUTF8String:links[i].why ?: ""] ?: @"",
-            @"link" : [NSString stringWithUTF8String:links[i].link ?: ""] ?: @"",
-        }];
-    }
-    NSString *d = [NSString stringWithUTF8String:display ?: ""] ?: @"", *s = [NSString stringWithUTF8String:status ?: ""] ?: @"";
-    NSString *c = [NSString stringWithUTF8String:calls ?: ""] ?: @"", *h = [NSString stringWithUTF8String:headline ?: ""] ?: @"";
-    NSArray<NSString *> *said = c.length ? [c componentsSeparatedByString:@"\n"] : @[];
-    long asked = atomic_fetch_add(&panelsAsked, 1) + 1;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (asked <= panelsDone) return;
-        panelsDone = asked;
-        @try {
-            OAPanelShow(visible != 0, d, h, s, said, rows, list);
-        } @catch (NSException *exception) {
+    // Go calls this from its own threads, which have no autorelease pool:
+    // what is autoreleased here would stay until the thread ends, which
+    // Go's threads don't, and each change of the panel would keep all it
+    // showed.
+    @autoreleasepool {
+        NSMutableArray<NSDictionary<NSString *, NSString *> *> *rows = [NSMutableArray array];
+        for (int i = 0; i < answerCount; i++) {
+            [rows addObject:@{
+                @"kind" : [NSString stringWithUTF8String:answers[i].kind ?: ""] ?: @"",
+                @"text" : [NSString stringWithUTF8String:answers[i].text ?: ""] ?: @"",
+                @"where" : [NSString stringWithUTF8String:answers[i].where ?: ""] ?: @"",
+                @"link" : [NSString stringWithUTF8String:answers[i].link ?: ""] ?: @"",
+            }];
         }
-    });
+        NSMutableArray<NSDictionary<NSString *, NSString *> *> *list = [NSMutableArray array];
+        for (int i = 0; i < count; i++) {
+            [list addObject:@{
+                @"kind" : [NSString stringWithUTF8String:links[i].kind ?: ""] ?: @"",
+                @"title" : [NSString stringWithUTF8String:links[i].title ?: ""] ?: @"",
+                @"date" : [NSString stringWithUTF8String:links[i].date ?: ""] ?: @"",
+                @"why" : [NSString stringWithUTF8String:links[i].why ?: ""] ?: @"",
+                @"link" : [NSString stringWithUTF8String:links[i].link ?: ""] ?: @"",
+            }];
+        }
+        NSString *d = [NSString stringWithUTF8String:display ?: ""] ?: @"", *s = [NSString stringWithUTF8String:status ?: ""] ?: @"";
+        NSString *c = [NSString stringWithUTF8String:calls ?: ""] ?: @"", *h = [NSString stringWithUTF8String:headline ?: ""] ?: @"";
+        NSArray<NSString *> *said = c.length ? [c componentsSeparatedByString:@"\n"] : @[];
+        long asked = atomic_fetch_add(&panelsAsked, 1) + 1;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (asked <= panelsDone) return;
+            panelsDone = asked;
+            @try {
+                OAPanelShow(visible != 0, d, h, s, said, rows, list);
+            } @catch (NSException *exception) {
+            }
+        });
+    }
 }
