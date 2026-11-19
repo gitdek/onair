@@ -82,9 +82,9 @@ NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *>
     }
     // What was said that differs from the record, with where the record
     // says it, and a click opens that moment. Then answer cards: a
-    // question as heard, then its written answer and each of its sources,
-    // or each line of its answer with where it was said under it,
-    // indented, and a click opens that moment; or a word on it.
+    // question as heard, then a word on it, if any, then its written
+    // answer and each of its sources, or each line of its answer with
+    // where it was said under it, indented, and a click opens that moment.
     CGFloat indent = 10, lineWidth = inner - indent;
     for (NSDictionary<NSString *, NSString *> *row in answers) {
         NSString *kind = row[@"kind"] ?: @"";

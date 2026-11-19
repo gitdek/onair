@@ -517,7 +517,9 @@ type answerRow struct{ kind, text, where, link string }
 // answerRows is what the panel shows of a difference from the record and
 // of answer cards, a row each, in order. A difference from the record goes
 // first, as a row of its own. Each card goes as rows: its question, its
-// answer and sources, or its lines, and its word.
+// word on it, and then its answer and sources, or its lines. The word comes
+// before the lines, since it may introduce them, as "No direct answer; the
+// closest notes:" does.
 func answerRows(differs AnswerLine, answers []Answer) []answerRow {
 	var rows []answerRow
 	if differs.Text != "" {
@@ -525,6 +527,9 @@ func answerRows(differs AnswerLine, answers []Answer) []answerRow {
 	}
 	for _, a := range answers {
 		rows = append(rows, answerRow{kind: "question", text: a.Question})
+		if a.Note != "" {
+			rows = append(rows, answerRow{kind: "note", text: a.Note})
+		}
 		if a.Text != "" {
 			rows = append(rows, answerRow{kind: "answer", text: a.Text})
 		}
@@ -533,9 +538,6 @@ func answerRows(differs AnswerLine, answers []Answer) []answerRow {
 		}
 		for _, l := range a.Lines {
 			rows = append(rows, answerRow{"line", l.Text, l.Where, l.URL})
-		}
-		if a.Note != "" {
-			rows = append(rows, answerRow{kind: "note", text: a.Note})
 		}
 	}
 	return rows
