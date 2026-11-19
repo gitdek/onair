@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "fingerprint": "sha256:bb4e821273b1f4d02080a2635b4b2a8f51570a4dc94e549653aa821d1a45b1e4",
+  "limitation": {
+    "code": "too_large",
+    "actual": 591,
+    "limit": 500,
+    "source": {
+      "module": "DiskGuard",
+      "config": {
+        "Specification": "Spec",
+        "Constants": {
+          "MaxFreeBytes": "22",
+          "MaxPieceBytes": "2",
+          "ReserveBytes": "10",
+          "StartBytes": "20"
+        },
+        "Invariants": [
+          "RoomToStart",
+          "ContinuationDecision",
+          "OwnPiecesPreserveReserve",
+          "OneStop",
+          "StopIsLatched",
+          "NoCaptureWhileStopRequested",
+          "TypeOK",
+          "StartRefusalExplainsSpace",
+          "UnsafeReadingRequestsStop",
+          "StopEmissionIsExact",
+          "OrdinaryStopWithReason",
+          "CaptureNeedsPermission"
+        ],
+        "Properties": null
+      },
+      "tool": {
+        "Image": "eclipse-temurin@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29c525d58bf5e02e91b0f",
+        "JarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+      },
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    }
+  },
+  "comparison_ref": {
+    "version": 1,
+    "file": "comparison.json",
+    "fingerprint": "sha256:698dc6dff6cbd1d77bb7520813fbe94286d88111752d3ce1cc3472caeec6db35"
+  }
+}

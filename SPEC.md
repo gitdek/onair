@@ -140,7 +140,7 @@ The gate verifies it again on every pull request. The app reaches it as the owne
 - A TLA+ model that TLC explores exhaustively: 39,742 states, every witness reached, every planted bug caught, both liveness properties holding under their fairness.
 - Go code proved with Gobra against contracts that restate the model, 29 of 29 functions with overflow checks, and checked against the model step by step. The check one size larger isn't claimed: TLC doesn't finish it within its three minutes.
 
-Nothing in the app calls it yet. Today's recorder in `internal/recorder` still decides these things in plain Go, and wiring the core in is part of what remains of milestone one.
+It's released as `core/session/v0.1.0`, tagged on 31952c1, where the gate had verified it unchanged since it merged, and the app requires it. Nothing in the app calls it yet: today's recorder in `internal/recorder` still decides these things in plain Go, and [#26](https://github.com/gitdek/onair/issues/26) wires the core in.
 
 ## The pieces core
 
@@ -150,7 +150,7 @@ Nothing in the app calls it yet. Today's recorder in `internal/recorder` still d
 - A TLA+ model that TLC explores exhaustively: 24,760 states, every witness reached, every planted bug caught, all five liveness properties holding under their fairness, and the check one size larger passes too.
 - Go code proved with Gobra against contracts that restate the model, 31 of 31 functions with overflow checks, and checked against the model step by step.
 
-Nothing in the app calls it yet. Today's `internal/spool` and `internal/recorder` still keep the pieces in plain Go, and wiring the core in is part of what remains of milestone one.
+It's released as `core/pieces/v0.1.0` on the same commit, and the app requires it. Nothing in the app calls it yet: today's `internal/spool` and `internal/recorder` still keep the pieces in plain Go, and [#26](https://github.com/gitdek/onair/issues/26) wires the core in, with the pieces the writer made on a Mac, in `internal/spool/testdata/writer`, as test data.
 
 ## The repository
 
