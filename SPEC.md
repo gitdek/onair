@@ -2,7 +2,7 @@
 
 This page describes On Air as it is. [`docs/PRD.md`](docs/PRD.md) describes what it is meant to become.
 
-Milestone one is under way. Two parts exist: a menu-bar recorder that keeps each recording in pieces on disk, and the proved core of the hand-over, through which the recorder hands each finished recording to the folder picked from its menu. The proved cores of a recording's life and of its pieces are merged too, and nothing calls them yet. Beside them is a first, experimental piece of milestone three, [Live Context](#live-context-a-first-experiment), tried by hand on the owner's Mac, in a real meeting among other tries. The recorder was checked by hand on the owner's Mac on 14 November 2026, and [what was checked and what wasn't](#how-its-checked) is below. None of the milestone's own hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
+Milestone one is under way. Two parts exist: a menu-bar recorder that keeps each recording in pieces on disk, and the proved core of the hand-over, through which the recorder hands each finished recording to the folder picked from its menu. The proved cores of a recording's life, of its pieces and of the disk guard are merged too, and nothing calls them yet. Beside them is a first, experimental piece of milestone three, [Live Context](#live-context-a-first-experiment), tried by hand on the owner's Mac, in a real meeting among other tries. The recorder was checked by hand on the owner's Mac on 14 November 2026, and [what was checked and what wasn't](#how-its-checked) is below. None of the milestone's own hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
 
 ## The recorder
 
@@ -64,7 +64,7 @@ The mixer waits for whichever source is behind, half a second at most, then carr
 - Get past two places the core's model doesn't go. A file that takes the recording's name while the copy is made, and is gone again by the time it is compared, leaves the core asking for the same comparison, and a copy removed from under its hidden name before it is given its name leaves it nothing to give. Either way the hand-over stops and keeps the spool's file, and the menu says On Air can't carry it on by itself. It looks again at each launch and folder pick, and stops the same way, whatever folder is picked. [#16](https://github.com/gitdek/onair/issues/16) asks for the core to end the attempt in both, so that it is tried again as a failed one is.
 - Try a failed hand-over again by itself while On Air runs. That happens at a launch, and when a folder is picked.
 - Keep a second On Air away from the first one's recordings. Two copies of the app running at once share the spool, and nothing stops both handing over the same recording.
-- Guard the disk (rule 8), whose core is [#10](https://github.com/gitdek/onair/issues/10), or the length of a recording (decision 4).
+- Guard the disk (rule 8): its core is merged and released ([#10](https://github.com/gitdek/onair/issues/10)), and [#29](https://github.com/gitdek/onair/issues/29) is its caller. Nor the length of a recording (decision 4).
 - Try a failed join again when the person asks, or leave out a piece the join can't read (rule 9). Today such a piece fails the whole join.
 - Carry a recording on after On Air or its recorder dies (decision 3). A killed recording is recovered as it stands at the next launch.
 - Start capture again when it stops mid-recording, for the microphone or anything else. The recording ends there and what was recorded is kept.
@@ -151,6 +151,16 @@ It's released as `core/session/v0.1.0`, tagged on 31952c1, where the gate had ve
 - Go code proved with Gobra against contracts that restate the model, 31 of 31 functions with overflow checks, and checked against the model step by step.
 
 It's released as `core/pieces/v0.1.0` on the same commit, and the app requires it. Nothing in the app calls it yet: today's `internal/spool` and `internal/recorder` still keep the pieces in plain Go, and [#26](https://github.com/gitdek/onair/issues/26) wires the core in, with the pieces the writer made on a Mac, in `internal/spool/testdata/writer`, as test data.
+
+## The disk guard core
+
+[`core/diskguard`](core/diskguard) decides, from the free-space readings its caller takes, whether a recording may start and, while one runs, whether it must stop. A Start is allowed exactly when its reading succeeds and shows at least the start line. While recording, each piece's reading, and each check before capture starts again, lets capture go on exactly when the reading succeeds with at least the reserve plus two of the largest pieces left and no stop has been asked for; otherwise the guard asks for one stop, which stays asked. A failed reading counts as too little, and the running recording's own pieces, within their stated size, never take free space below the reserve. The guard reads no disk and keeps nothing across a crash, and its caller gives it the three sizes. It was built by the factory from [#10](https://github.com/gitdek/onair/issues/10) and merged through the gate in [#31](https://github.com/gitdek/onair/pull/31).
+
+- 36 statements, ratified on the issue and pinned by hash in [`ratified.lock`](core/diskguard/.invariant/ratified.lock).
+- A TLA+ model that TLC explores exhaustively: 591 states, every witness reached, all eleven planted bugs caught. The check one size larger isn't claimed: there, TLC finds the model's `TypeOK` violated.
+- Go code proved with Gobra against contracts that restate the model, 14 of 14 functions with overflow checks, and checked against the model step by step: 42,552 steps, every one of its 591 states visited.
+
+It's released as `core/diskguard/v0.1.0`, tagged on ba70a6a, where the gate had verified it as merged, and the app requires it. Nothing in the app calls it yet: On Air has no disk guard today, and [#29](https://github.com/gitdek/onair/issues/29) is its caller.
 
 ## The repository
 

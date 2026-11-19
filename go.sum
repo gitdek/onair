@@ -1,3 +1,5 @@
+github.com/gitdek/onair/core/diskguard v0.1.0 h1:554WV5daVaselyBYcvodl22On46gnDLP0aOJX8zmLc0=
+github.com/gitdek/onair/core/diskguard v0.1.0/go.mod h1:lq0lMOu7DLGlYXO7PcUwze2WxWQJBDFJKmsrNdHaHbI=
 github.com/gitdek/onair/core/handover v0.1.0 h1:Yl+5nFMuoRSqGw8YQN5wD2u3AlmuToYcYEMw3sCPC40=
 github.com/gitdek/onair/core/handover v0.1.0/go.mod h1:BsUuo8yxGdSjVewrjDeg55DjSadvETlI/HBQ3BlY9bI=
 github.com/gitdek/onair/core/pieces v0.1.0 h1:H5w8MZgJZYP4XC0ssVxeZp4KZ2zpIfkIAtyjYFbq/1k=
