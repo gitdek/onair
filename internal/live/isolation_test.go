@@ -114,13 +114,23 @@ func session(t *testing.T, wrap func(recorder.Edge) recorder.Edge, trouble func(
 	return log.said(), files
 }
 
+// listingArchive is On the Record with its lists, which come as lists
+// says.
+type listingArchive struct {
+	fakeArchive
+	lists func(ctx context.Context) (Library, error)
+}
+
+func (a *listingArchive) Library(ctx context.Context) (Library, error) { return a.lists(ctx) }
+
 // TestTheRecorderIsTheSameWhateverTheLiveSideDoes records the same meeting
 // with no live side, and then with the live side failing in each way it
-// can: On the Record down, slow, never answering, answering nonsense or
-// panicking; the panel and recognition panicking or hanging; speech
-// recognition refused, unsupported or failing, sound dropped, and a flood
-// of words. Every call the recorder makes of the Mac, in order, and every
-// file it leaves are the same each time, and no call it takes waits.
+// can: On the Record, its lists among them, down, slow, never answering,
+// answering nonsense or panicking; the panel and recognition panicking or
+// hanging; speech recognition refused, unsupported or failing, sound
+// dropped, and a flood of words, naming someone the archive knows. Every
+// call the recorder makes of the Mac, in order, and every file it leaves
+// are the same each time, and no call it takes waits.
 func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 	never := make(chan struct{})
 	defer close(never)
@@ -140,6 +150,23 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 		"nonsense": func(context.Context, string) (Found, error) { return nonsense, nil },
 		"panics":   func(context.Context, string) (Found, error) { panic("the archive broke") },
 	}
+	// The archive's lists fail in the same ways, and nonsense among them
+	// is long, empty or strangely written.
+	nonsenseLists := Library{
+		Meetings: []Meeting{{ID: "x", Title: strings.Repeat("Zed Mid Caps ", 1<<12), URL: "javascript:void(0)", Summary: strings.Repeat("and Then Some ", 1<<12),
+			People: []string{"", "  ", "?", "Priya", strings.Repeat("Priya ", 500)}}, {}},
+		Items: []Item{{ID: "y", Owner: "/,&; and with", Text: strings.Repeat("Send Priya the Zed ", 1<<10), Ours: true, URL: "http://[::1]:1/" + strings.Repeat("y", 1<<16)}, {Ours: true}, {Owner: "Priya"}},
+		Notes: []Note{{ID: "z", Title: "", Tags: []string{"", "-", "priya"}, URL: "file:///etc/passwd"}},
+	}
+	lists := map[string]func(context.Context) (Library, error){
+		"down": func(context.Context) (Library, error) {
+			return Library{}, fmt.Errorf("On the Record isn't answering on this Mac")
+		},
+		"slow":     func(ctx context.Context) (Library, error) { <-ctx.Done(); return Library{}, ctx.Err() },
+		"never":    func(context.Context) (Library, error) { <-never; return Library{}, nil },
+		"nonsense": func(context.Context) (Library, error) { return nonsenseLists, nil },
+		"panics":   func(context.Context) (Library, error) { panic("the archive's lists broke") },
+	}
 	words := func(c *Controller) func() {
 		return func() {
 			for i := 0; i < 2000; i++ {
@@ -158,23 +185,29 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 	}
 	type failure struct {
 		answer func(context.Context, string) (Found, error)
+		lists  func(context.Context) (Library, error)
 		screen *fakeScreen
 	}
 	failures := map[string]failure{
-		"the panel panics":     {answer: answers["nonsense"], screen: &fakeScreen{broken: true}},
-		"the panel hangs":      {answer: answers["nonsense"], screen: &fakeScreen{hang: never}},
-		"everything at once":   {answer: answers["panics"], screen: &fakeScreen{broken: true}},
-		"recognition is fine":  {answer: func(context.Context, string) (Found, error) { return strong("m1", "m2"), nil }, screen: &fakeScreen{}},
+		"the panel panics":   {answer: answers["nonsense"], lists: lists["nonsense"], screen: &fakeScreen{broken: true}},
+		"the panel hangs":    {answer: answers["nonsense"], lists: lists["nonsense"], screen: &fakeScreen{hang: never}},
+		"everything at once": {answer: answers["panics"], lists: lists["panics"], screen: &fakeScreen{broken: true}},
+		"recognition is fine": {answer: func(context.Context, string) (Found, error) { return strong("m1", "m2"), nil },
+			lists: func(context.Context) (Library, error) { return madeUpLibrary(), nil }, screen: &fakeScreen{}},
 		"no archive is set up": {answer: nil, screen: &fakeScreen{}},
 	}
 	for name, answer := range answers {
-		failures["On the Record "+name] = failure{answer: answer, screen: &fakeScreen{}}
+		failures["On the Record "+name] = failure{answer: answer, lists: lists[name], screen: &fakeScreen{}}
 	}
+	// Cards about names, and the standing card, as Live Context runs.
+	cfg := fast
+	cfg.Topics, cfg.TopicQuiet, cfg.TopicAgain, cfg.TopicLines, cfg.TopicTokens = true, Defaults.TopicQuiet, Defaults.TopicAgain, Defaults.TopicLines, Defaults.TopicTokens
+	cfg.FirstMinute, cfg.HearShort, cfg.HearLong = Defaults.FirstMinute, Defaults.HearShort, Defaults.HearLong
 	for name, f := range failures {
 		t.Run(name, func(t *testing.T) {
 			var archive Archive
 			if f.answer != nil {
-				archive = &fakeArchive{answer: f.answer}
+				archive = &listingArchive{fakeArchive: fakeArchive{answer: f.answer}, lists: f.lists}
 			}
 			// A judge is chosen, and fails in its own way: slow, never
 			// answering, or panicking, by turns.
@@ -203,7 +236,7 @@ func TestTheRecorderIsTheSameWhateverTheLiveSideDoes(t *testing.T) {
 				}
 				panic("the model broke")
 			}}
-			c := Start(fast, archive, f.screen, time.Now, map[string]Judge{"local": judge}, map[string]Writer{"local": writer})
+			c := Start(cfg, archive, f.screen, time.Now, map[string]Judge{"local": judge}, map[string]Writer{"local": writer})
 			c.Judging("local")
 			got, files := session(t, func(e recorder.Edge) recorder.Edge { return Tap(e, c) }, words(c))
 			if !reflect.DeepEqual(got, want) {
