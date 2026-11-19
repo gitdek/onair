@@ -457,34 +457,33 @@ func LiveAsk() { C.onair_live_ask() }
 // result.
 func Listen(on bool, chunk float64) { C.onair_live_listen(flag(on), C.double(chunk)) }
 
-// Link is a link the live panel shows.
-type Link struct{ Kind, Title, Date, Why, URL string }
-
-// Answer is an answer card the live panel shows: a question as heard, an
-// answer written for it and its sources, or the lines that answer it, and
-// a word on it.
-type Answer struct {
-	Question string
-	Text     string
-	Sources  []AnswerLine
-	Lines    []AnswerLine
-	Note     string
+// Card is a card the live panel draws: a title, short lines, each with
+// its sources, and a word on it.
+type Card struct {
+	Title string
+	Lines []CardLine
+	Note  string
 }
 
-// AnswerLine is a line of an answer, where it was said, and the moment a
+// CardLine is a short line of a card, and its sources.
+type CardLine struct {
+	Text    string
+	Sources []Source
+}
+
+// Source is a line's source, as a small label a click on opens.
+type Source struct{ Label, URL string }
+
+// AnswerLine is a line on the panel, where it was said, and the moment a
 // click opens.
 type AnswerLine struct{ Text, Where, URL string }
 
 // ShowPanel sets what the live panel shows, beside a display named as
-// Display.ID names it, or the main one when empty: a line under its title,
-// a status line, what a model said, a line each, what was said that
-// differs from the record, when its Text is set, answer cards and links.
-// It hides the panel when visible is false, and returns at once.
-func ShowPanel(visible bool, display, headline, status string, calls []string, differs AnswerLine, answers []Answer, links []Link) {
-	n := len(links)
-	list := (*C.onair_link)(C.malloc(C.size_t(max(n, 1)) * C.size_t(unsafe.Sizeof(C.onair_link{}))))
-	defer C.free(unsafe.Pointer(list))
-	items := unsafe.Slice(list, max(n, 1))
+// Display.ID names it, or the main one when empty: a status line, what a
+// model said, a line each, what was said that differs from the record,
+// when its Text is set, and cards, newest first. It hides the panel when
+// visible is false, and returns at once.
+func ShowPanel(visible bool, display, status string, calls []string, differs AnswerLine, cards []Card) {
 	var strs []*C.char
 	str := func(s string) *C.char {
 		c := C.CString(s)
@@ -496,48 +495,40 @@ func ShowPanel(visible bool, display, headline, status string, calls []string, d
 			C.free(unsafe.Pointer(s))
 		}
 	}()
-	for i, l := range links {
-		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
+	var rows []C.onair_row
+	for _, r := range cardRows(differs, cards) {
+		rows = append(rows, C.onair_row{kind: str(r.kind), text: str(r.text), where: str(r.where), link: str(r.link)})
 	}
-	var rows []C.onair_answer
-	for _, r := range answerRows(differs, answers) {
-		rows = append(rows, C.onair_answer{kind: str(r.kind), text: str(r.text), where: str(r.where), link: str(r.link)})
-	}
-	answerList := (*C.onair_answer)(C.malloc(C.size_t(max(len(rows), 1)) * C.size_t(unsafe.Sizeof(C.onair_answer{}))))
-	defer C.free(unsafe.Pointer(answerList))
-	copy(unsafe.Slice(answerList, max(len(rows), 1)), rows)
-	C.onair_live_show(flag(visible), str(display), str(headline), str(status), str(strings.Join(calls, "\n")), answerList, C.int(len(rows)), list, C.int(n))
+	list := (*C.onair_row)(C.malloc(C.size_t(max(len(rows), 1)) * C.size_t(unsafe.Sizeof(C.onair_row{}))))
+	defer C.free(unsafe.Pointer(list))
+	copy(unsafe.Slice(list, max(len(rows), 1)), rows)
+	C.onair_live_show(flag(visible), str(display), str(status), str(strings.Join(calls, "\n")), list, C.int(len(rows)))
 }
 
-// answerRow is a row of what the panel shows above its links: a
-// difference from the record, or a card's question, answer, source, line
-// or word on it.
-type answerRow struct{ kind, text, where, link string }
+// cardRow is a row of what the panel shows: a difference from the record,
+// or a card's title, word on it, line, or a source of the line before.
+type cardRow struct{ kind, text, where, link string }
 
-// answerRows is what the panel shows of a difference from the record and
-// of answer cards, a row each, in order. A difference from the record goes
-// first, as a row of its own. Each card goes as rows: its question, its
-// word on it, and then its answer and sources, or its lines. The word comes
-// before the lines, since it may introduce them, as "No direct answer; the
-// closest notes:" does.
-func answerRows(differs AnswerLine, answers []Answer) []answerRow {
-	var rows []answerRow
+// cardRows is what the panel shows of a difference from the record and of
+// cards, a row each, in order. A difference from the record goes first, as
+// a row of its own. Each card goes as rows: its title, its word on it, and
+// then each line followed by its sources. The word comes before the lines,
+// since it may introduce them.
+func cardRows(differs AnswerLine, cards []Card) []cardRow {
+	var rows []cardRow
 	if differs.Text != "" {
-		rows = append(rows, answerRow{"differs", differs.Text, differs.Where, differs.URL})
+		rows = append(rows, cardRow{"differs", differs.Text, differs.Where, differs.URL})
 	}
-	for _, a := range answers {
-		rows = append(rows, answerRow{kind: "question", text: a.Question})
-		if a.Note != "" {
-			rows = append(rows, answerRow{kind: "note", text: a.Note})
+	for _, c := range cards {
+		rows = append(rows, cardRow{kind: "title", text: c.Title})
+		if c.Note != "" {
+			rows = append(rows, cardRow{kind: "note", text: c.Note})
 		}
-		if a.Text != "" {
-			rows = append(rows, answerRow{kind: "answer", text: a.Text})
-		}
-		for _, l := range a.Sources {
-			rows = append(rows, answerRow{kind: "source", text: l.Text, link: l.URL})
-		}
-		for _, l := range a.Lines {
-			rows = append(rows, answerRow{"line", l.Text, l.Where, l.URL})
+		for _, l := range c.Lines {
+			rows = append(rows, cardRow{kind: "line", text: l.Text})
+			for _, src := range l.Sources {
+				rows = append(rows, cardRow{kind: "source", text: src.Label, link: src.URL})
+			}
 		}
 	}
 	return rows
@@ -579,6 +570,33 @@ func frameSize(width, height, scale float64, rows int) (int, int) {
 func runMain(seconds float64) { C.onair_test_run_main(C.double(seconds)) }
 func waitMain()               { C.onair_test_wait_main() }
 func mallocInUse() int64      { return int64(C.onair_test_malloc_in_use()) }
+
+// panelLayout lays out what the panel would show of a difference from the
+// record and cards, without a window, and says how tall it is and how
+// many of its parts a click opens. Not on the main thread.
+func panelLayout(differs AnswerLine, cards []Card) (height float64, clickable int) {
+	var strs []*C.char
+	str := func(s string) *C.char {
+		c := C.CString(s)
+		strs = append(strs, c)
+		return c
+	}
+	defer func() {
+		for _, s := range strs {
+			C.free(unsafe.Pointer(s))
+		}
+	}()
+	var rows []C.onair_row
+	for _, r := range cardRows(differs, cards) {
+		rows = append(rows, C.onair_row{kind: str(r.kind), text: str(r.text), where: str(r.where), link: str(r.link)})
+	}
+	list := (*C.onair_row)(C.malloc(C.size_t(max(len(rows), 1)) * C.size_t(unsafe.Sizeof(C.onair_row{}))))
+	defer C.free(unsafe.Pointer(list))
+	copy(unsafe.Slice(list, max(len(rows), 1)), rows)
+	var n C.int
+	h := C.onair_test_panel_layout(list, C.int(len(rows)), &n)
+	return float64(h), int(n)
+}
 
 // A buffer of one of the two sounds, given to speechMix: the sound, 0 the
 // call's and 1 the microphone's, the frame its stamp puts it at, and its

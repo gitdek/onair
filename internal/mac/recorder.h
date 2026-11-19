@@ -65,24 +65,14 @@ typedef struct {
     double at, length; // when it was said, in seconds from the start of its request's sound
 } onair_segment;
 
-// A link the live panel shows.
+// A row of the live panel: a difference from the record, a card's title,
+// a line of a card, a source of the line before it, or a word on a card.
 typedef struct {
-    const char *kind;  // what it leads to: a meeting, a notebook entry or an open item
-    const char *title;
-    const char *date;
-    const char *why;   // a line on why it connects
-    const char *link;  // what a click opens
-} onair_link;
-
-// A row of the live panel's answer cards: a card's question as heard, a
-// line of its answer, or a word on it, such as that the archive has no
-// answer.
-typedef struct {
-    const char *kind;  // "question", "line" or "note"
-    const char *text;
-    const char *where; // for a line: its meeting, date and moment
-    const char *link;  // for a line: what a click opens
-} onair_answer;
+    const char *kind;  // "differs", "title", "line", "source" or "note"
+    const char *text;  // for a source: its label, such as "Nov 9"
+    const char *where; // for a difference: where the record says it
+    const char *link;  // for a difference or a source: what a click opens
+} onair_row;
 
 // A connected display, as onairDisplays reports it.
 typedef struct {
@@ -194,11 +184,11 @@ void onair_live_ask(void);
 // meanwhile, and onairLive
 // reports what goes wrong, and what the diagnostic log counts.
 void onair_live_listen(int on, double chunk);
-// LiveShow sets what the live panel shows, or hides it: a line under its
-// title, a status line, what a model said about the call, a line each,
-// answer cards, a row each, and links. Any thread may call it.
-void onair_live_show(int visible, const char *display, const char *headline, const char *status, const char *calls, const onair_answer *answers, int answerCount,
-                     const onair_link *links, int count);
+// LiveShow sets what the live panel shows, or hides it: a status line,
+// what a model said about the call, a line each, and its rows: a
+// difference from the record, then its cards, newest first. Any thread
+// may call it.
+void onair_live_show(int visible, const char *display, const char *status, const char *calls, const onair_row *rows, int count);
 // For tests, whose main thread runs nothing else. TestRunMain runs the
 // main thread's run loop for at most seconds, so that what was handed to
 // the main queue runs; only the main thread may call it. TestWaitMain
@@ -207,6 +197,10 @@ void onair_live_show(int visible, const char *display, const char *headline, con
 void onair_test_run_main(double seconds);
 void onair_test_wait_main(void);
 long onair_test_malloc_in_use(void);
+// TestPanelLayout lays out what the panel would show of rows, without a
+// window, on the main thread, and says how tall it is and how many parts
+// of it a click opens. Any thread but the main one may call it.
+double onair_test_panel_layout(const onair_row *rows, int count, int *clickable);
 // Quit ends the app.
 void onair_quit(void);
 

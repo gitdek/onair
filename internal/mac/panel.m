@@ -1,8 +1,9 @@
 #import "panel.h"
 #import "choose.h"
 
-// The panel's measures, in points.
-static const CGFloat panelWidth = 300, margin = 12, gap = 10;
+// The panel's measures, in points: wide enough for a short line of
+// readable text and its sources beside it.
+static const CGFloat panelWidth = 340, margin = 14, gap = 12, chipColumn = 54;
 
 // OAFlipped lays out from its top left, as text is read.
 @interface OAFlipped : NSView
@@ -37,7 +38,7 @@ static const CGFloat panelWidth = 300, margin = 12, gap = 10;
     if (self.url && NSPointInRect(at, self.bounds)) [[NSWorkspace sharedWorkspace] openURL:self.url];
 }
 - (void)resetCursorRects {
-    [self addCursorRect:self.bounds cursor:NSCursor.pointingHandCursor];
+    if (self.url) [self addCursorRect:self.bounds cursor:NSCursor.pointingHandCursor];
 }
 @end
 
@@ -67,88 +68,97 @@ static NSURL *OAOpenable(NSString *link) {
     return [url.scheme isEqualToString:@"http"] || [url.scheme isEqualToString:@"https"] ? url : nil;
 }
 
-NSView *OAPanelContent(NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *answers,
-                       NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+// OAChip is a source: a small rounded label, such as "Nov 9", that a click
+// opens, at the right of a column of width at x, y. It returns its height.
+static CGFloat OAChip(NSView *into, NSString *text, NSString *link, CGFloat x, CGFloat y, CGFloat width) {
+    if (!text.length) return 0;
+    NSFont *font = [NSFont systemFontOfSize:10.5 weight:NSFontWeightMedium];
+    NSTextField *label = [NSTextField labelWithString:text];
+    label.font = font;
+    label.textColor = NSColor.linkColor;
+    label.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSSize fit = [label sizeThatFits:NSMakeSize(width, CGFLOAT_MAX)];
+    CGFloat w = MIN(ceil(fit.width) + 12, width), h = ceil(fit.height) + 3;
+    OALinkView *chip = [[OALinkView alloc] initWithFrame:NSMakeRect(x + width - w, y, w, h)];
+    chip.url = OAOpenable(link);
+    chip.toolTip = chip.url.absoluteString;
+    NSBox *pill = [[NSBox alloc] initWithFrame:chip.bounds];
+    pill.boxType = NSBoxCustom;
+    pill.borderWidth = 0;
+    pill.cornerRadius = h / 2;
+    pill.fillColor = [NSColor.linkColor colorWithAlphaComponent:0.12];
+    [chip addSubview:pill];
+    label.frame = NSMakeRect(6, 1, w - 12, h - 3);
+    [chip addSubview:label];
+    [into addSubview:chip];
+    return h;
+}
+
+// OACardBackground puts a card's quiet background behind what was laid out
+// between top and bottom.
+static void OACardBackground(NSView *into, CGFloat top, CGFloat bottom) {
+    NSBox *card = [[NSBox alloc] initWithFrame:NSMakeRect(margin - 8, top - 8, panelWidth - 2 * margin + 16, bottom - top + 14)];
+    card.boxType = NSBoxCustom;
+    card.borderWidth = 0;
+    card.cornerRadius = 9;
+    card.fillColor = [NSColor.labelColor colorWithAlphaComponent:0.06];
+    [into addSubview:card positioned:NSWindowBelow relativeTo:nil];
+}
+
+NSView *OAPanelContent(NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *rows) {
     OAFlipped *content = [[OAFlipped alloc] initWithFrame:NSMakeRect(0, 0, panelWidth, 100)];
     CGFloat inner = panelWidth - 2 * margin, y = margin;
-    y += OALabel(content, @"Live Context", [NSFont boldSystemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 1) + 4;
-    // Its digits keep their width, so the line doesn't shift as they count.
-    CGFloat h = OALabel(content, headline, [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular], NSColor.secondaryLabelColor, margin, y, inner, 3);
-    y += h > 0 && status.length ? h + 4 : h;
-    y += OALabel(content, status, [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 5);
+    // The title and a quiet line on how it goes.
+    y += OALabel(content, @"Live Context", [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold], NSColor.tertiaryLabelColor, margin, y, inner, 1) + 2;
+    y += OALabel(content, status, [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin, y, inner, 3);
     for (NSString *said in calls) {
-        y += 6;
+        y += 8;
         y += OALabel(content, said, [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], NSColor.labelColor, margin, y, inner, 2);
     }
-    // What was said that differs from the record, with where the record
-    // says it, and a click opens that moment. Then answer cards: a
-    // question as heard, then a word on it, if any, then its written
-    // answer and each of its sources, or each line of its answer with
-    // where it was said under it, indented, and a click opens that moment.
-    CGFloat indent = 10, lineWidth = inner - indent;
-    for (NSDictionary<NSString *, NSString *> *row in answers) {
+    // What was said that differs from the record, and where the record
+    // says it, a click opening that moment. Then the cards, each in a
+    // quiet box: its title, a word on it, if any, then a short line a fact, with its sources at
+    // its right, a click on one opening it.
+    CGFloat cardTop = -1;
+    NSUInteger i = 0;
+    while (i < rows.count) {
+        NSDictionary<NSString *, NSString *> *row = rows[i];
         NSString *kind = row[@"kind"] ?: @"";
         if ([kind isEqualToString:@"differs"]) {
-            y += gap;
+            y += gap + 4;
             OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin, y, inner, 10)];
             view.url = OAOpenable(row[@"link"]);
             view.toolTip = view.url.absoluteString;
-            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSColor.systemOrangeColor, 0, 0, inner, 5) + 1;
-            h += OALabel(view, row[@"where"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, h, inner, 1);
+            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:13 weight:NSFontWeightMedium], NSColor.systemOrangeColor, 0, 0, inner, 5) + 2;
+            h += OALabel(view, row[@"where"], [NSFont systemFontOfSize:11], NSColor.linkColor, 0, h, inner, 1);
             view.frame = NSMakeRect(margin, y, inner, h);
             [content addSubview:view];
             y += h;
-        } else if ([kind isEqualToString:@"answer"]) {
-            y += 4;
-            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12], NSColor.labelColor, margin + indent, y, lineWidth, 6);
-        } else if ([kind isEqualToString:@"source"]) {
-            y += 2;
-            OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin + indent, y, lineWidth, 10)];
-            view.url = OAOpenable(row[@"link"]);
-            view.toolTip = view.url.absoluteString;
-            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, 0, lineWidth, 1);
-            view.frame = NSMakeRect(margin + indent, y, lineWidth, h);
-            [content addSubview:view];
-            y += h;
-        } else if ([kind isEqualToString:@"question"]) {
-            y += gap;
-            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSColor.labelColor, margin, y, inner, 2);
+        } else if ([kind isEqualToString:@"title"]) {
+            if (cardTop >= 0) OACardBackground(content, cardTop, y);
+            y += gap + 10;
+            cardTop = y;
+            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold], NSColor.labelColor, margin, y, inner, 2);
         } else if ([kind isEqualToString:@"line"]) {
-            y += 4;
-            OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin + indent, y, lineWidth, 10)];
-            view.url = OAOpenable(row[@"link"]);
-            view.toolTip = view.url.absoluteString;
-            CGFloat h = OALabel(view, row[@"text"], [NSFont systemFontOfSize:12], NSColor.labelColor, 0, 0, lineWidth, 2) + 1;
-            h += OALabel(view, row[@"where"], [NSFont systemFontOfSize:10], NSColor.linkColor, 0, h, lineWidth, 1);
-            view.frame = NSMakeRect(margin + indent, y, lineWidth, h);
-            [content addSubview:view];
-            y += h;
-        } else {
-            y += 3;
-            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, margin + indent, y, lineWidth, 2);
+            NSUInteger j = i + 1;
+            NSMutableArray<NSDictionary<NSString *, NSString *> *> *chips = [NSMutableArray array];
+            while (j < rows.count && [rows[j][@"kind"] isEqualToString:@"source"]) [chips addObject:rows[j++]];
+            CGFloat textWidth = chips.count ? inner - chipColumn - 6 : inner;
+            y += 6;
+            CGFloat h = OALabel(content, row[@"text"], [NSFont systemFontOfSize:13.5], NSColor.labelColor, margin, y, textWidth, 3);
+            CGFloat c = 1;
+            for (NSDictionary<NSString *, NSString *> *chip in chips) c += OAChip(content, chip[@"text"], chip[@"link"], margin + inner - chipColumn, y + c, chipColumn) + 3;
+            y += MAX(h, c - 3);
+            i = j;
+            continue;
+        } else if ([kind isEqualToString:@"note"]) {
+            y += 5;
+            y += OALabel(content, row[@"text"], [NSFont systemFontOfSize:12], NSColor.secondaryLabelColor, margin, y, inner, 2);
         }
+        i++;
     }
-    if (answers.count && links.count) {
-        y += gap + 2;
-        y += OALabel(content, @"Related", [NSFont boldSystemFontOfSize:10], NSColor.tertiaryLabelColor, margin, y, inner, 1) - gap + 2;
-    }
-    for (NSDictionary<NSString *, NSString *> *link in links) {
-        y += gap;
-        OALinkView *view = [[OALinkView alloc] initWithFrame:NSMakeRect(margin, y, inner, 10)];
-        NSURL *url = [NSURL URLWithString:link[@"link"] ?: @""];
-        view.url = OAOpenable(link[@"link"]);
-        view.toolTip = url.absoluteString;
-        NSString *kind = link[@"kind"] ?: @"", *date = link[@"date"] ?: @"";
-        NSString *meta = kind.length && date.length ? [NSString stringWithFormat:@"%@ · %@", kind, date] : (kind.length ? kind : date);
-        CGFloat h = 0;
-        h += OALabel(view, meta, [NSFont systemFontOfSize:10], NSColor.tertiaryLabelColor, 0, h, inner, 1) + 1;
-        h += OALabel(view, link[@"title"], [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSColor.labelColor, 0, h, inner, 2) + 1;
-        h += OALabel(view, link[@"why"], [NSFont systemFontOfSize:11], NSColor.secondaryLabelColor, 0, h, inner, 3);
-        view.frame = NSMakeRect(margin, y, inner, h);
-        [content addSubview:view];
-        y += h;
-    }
-    content.frame = NSMakeRect(0, 0, panelWidth, y + margin);
+    if (cardTop >= 0) OACardBackground(content, cardTop, y);
+    content.frame = NSMakeRect(0, 0, panelWidth, y + margin + (cardTop >= 0 ? 6 : 0));
     return content;
 }
 
@@ -215,14 +225,13 @@ static NSPanel *OAPanel(void) {
     return panel;
 }
 
-void OAPanelShow(BOOL visible, NSString *display, NSString *headline, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *answers,
-                 NSArray<NSDictionary<NSString *, NSString *> *> *links) {
+void OAPanelShow(BOOL visible, NSString *display, NSString *status, NSArray<NSString *> *calls, NSArray<NSDictionary<NSString *, NSString *> *> *rows) {
     if (!visible) {
         [panel orderOut:nil];
         return;
     }
     NSPanel *p = OAPanel();
-    NSView *content = OAPanelContent(headline, status, calls, answers, links);
+    NSView *content = OAPanelContent(status, calls, rows);
     NSRect size = content.frame;
     background.frame = size;
     background.subviews = @[ content ];

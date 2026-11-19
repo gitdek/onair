@@ -57,18 +57,23 @@ http://127.0.0.1:8797/actions?show=all
 
 ### Halcyon research
 _Someone, 2026-09-20 · investors · http://127.0.0.1:8797/notebook/n-1_
-> Halcyon's round
+> # Halcyon research
+> - **The round:** Halcyon's round is led by two angels, as [their email](https://mail.example/private) says
+> ok
 `
 
-func TestItReadsTheLinesOfABriefThatComeFromMeetings(t *testing.T) {
+func TestItReadsTheLinesOfABriefThatComeFromMeetingsAndTheNotebook(t *testing.T) {
 	m1, m2 := "http://127.0.0.1:8797/m/m-1", "http://127.0.0.1:8797/m/m-2"
 	want := []live.Point{
 		{Text: "Halcyon hopes to close a $750k pre-seed round", Under: "Investors · Discussion", Meeting: "Halcyon partner sync", Date: "2026-09-14", At: "6:12", URL: m1 + "?t=372"},
 		{Text: "The round should close before winter", Under: "Investors · Discussion", Meeting: "Halcyon partner sync", Date: "2026-09-14", At: "6:12", URL: m1 + "?t=372"},
-		{Text: "Priya to share the model with the partners", Under: "Discussion", Meeting: "Halcyon partner sync", Date: "2026-09-14", At: "9:50", URL: m1 + "?t=590"},
+		{Text: "Priya to share the model with the partners", Under: "Discussion", Meeting: "Halcyon partner sync", Date: "2026-09-14", At: "9:50", URL: m1 + "?t=590", Standing: "open"},
 		{Text: "The sync was short", Under: "Summary", Meeting: "Halcyon partner sync", Date: "2026-09-14", URL: m1},
 		{Text: "Doors open to the public on the 9th", Under: "Release timeline", Meeting: "Halcyon product walkthrough (demo)", Date: "2026-10-08", At: "1:05:09", URL: m2 + "?t=3909"},
 		{Text: "we would rather have it out before the long weekend", Meeting: "Halcyon product walkthrough", Date: "2026-10-08", At: "52:10", URL: m2 + "?t=3130.4&tab=transcript&transcript=x", Said: true},
+		// A notebook entry's quoted line, with a link's words and not
+		// where it leads; its heading and a short line are left out.
+		{Text: "The round: Halcyon's round is led by two angels, as their email says", Under: "notebook", Meeting: "Halcyon research", Date: "2026-09-20", URL: "http://127.0.0.1:8797/notebook/n-1", Notebook: true},
 	}
 	if got := points(madeUpBrief); !reflect.DeepEqual(got, want) {
 		t.Fatalf("read\n%+v\nnot\n%+v", got, want)
@@ -87,7 +92,7 @@ func TestItAsksGatherContextInPlainWordsAndNeverForTheScreen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Passages != 4 || len(b.Points) != 6 || b.Points[0].At != "6:12" {
+	if b.Passages != 4 || len(b.Points) != 7 || b.Points[0].At != "6:12" {
 		t.Fatalf("read %+v", b)
 	}
 	d.mu.Lock()
@@ -131,7 +136,7 @@ func TestABriefThatGoesWrongComesBackAsAnError(t *testing.T) {
 	c, _ := open(t, d)
 	ctx, cancel := contextWithin(time.Second)
 	defer cancel()
-	if b, err := c.Answer(ctx, "how much", false); err != nil || len(b.Points) != 6 || b.Passages != 0 {
+	if b, err := c.Answer(ctx, "how much", false); err != nil || len(b.Points) != 7 || b.Passages != 0 {
 		t.Fatalf("read %+v, %v", b, err)
 	}
 }

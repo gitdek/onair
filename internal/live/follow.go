@@ -83,6 +83,26 @@ type follow struct {
 	// kept for the question once it was, and dropped.
 	askedEarly, keptEarly, droppedEarly int
 
+	// Cards about the names the archive knows, as they come up, and the
+	// standing card of open items.
+	roster       *roster   // the names the archive knows, once its lists came
+	libAsked     time.Time // when its lists were last asked for
+	libAsking    bool
+	listenedAt   time.Time // when listening began, for the names said in its first minute
+	firstNamed   []int     // the people named in the first minute
+	tcards       []*tcard  // cards about names, newest first, and the standing card
+	standing     *tcard
+	lastDeck     []shelf // the cards the panel showed last
+	tcardsMade   int
+	fetching     int       // the card whose name On the Record is asked about, or 0
+	fetchAsked   time.Time // when it was asked
+	topicWriting int       // the card the writer writes, or 0
+	topicAsked   time.Time // when it was asked
+	seen         map[string]seenFact
+	// Counts for the diagnostic log: cards about names started and
+	// written.
+	topicsStarted, topicsWritten int
+
 	allowed   Problem // SpeechAllowed, SpeechRefused or SpeechUnsupported, once the Mac has said
 	speech    string  // what is wrong with listening, if anything
 	transient bool    // and it goes once words are heard again
@@ -171,6 +191,8 @@ func (f *follow) record(on bool, now time.Time) {
 		f.stream, f.cards, f.answering, f.lately, f.rewording = stream{}, nil, 0, nil, 0
 		f.writing, f.wrote, f.statements, f.newFact, f.records = 0, "", nil, false, nil
 		f.checking, f.checked, f.check, f.differs = 0, time.Time{}, checkAsked{}, nil
+		f.roster, f.libAsked, f.libAsking, f.firstNamed, f.tcards, f.standing = nil, time.Time{}, false, nil, nil, nil
+		f.fetching, f.topicWriting, f.seen, f.listenedAt = 0, 0, nil, time.Time{}
 	case !on && f.recording:
 		f.stopped = now
 	}
@@ -301,10 +323,10 @@ func (f *follow) text() string {
 // due says whether to ask On the Record now, and what: while listening,
 // once something new was said since the last question, f.cfg.Every after
 // it, when the window holds f.cfg.Least words, and never while a question
-// waits for its answer. A question it returns is under way: answer or
+// waits for its answer, nor when f.cfg.Every is zero. A question it returns is under way: answer or
 // abandon ends it.
 func (f *follow) due(now time.Time) (text string, ask int, ok bool) {
-	if !f.listening() || f.asking != 0 || !f.fresh {
+	if !f.listening() || f.asking != 0 || !f.fresh || f.cfg.Every <= 0 {
 		return "", 0, false
 	}
 	if !f.asked.IsZero() && now.Sub(f.asked) < f.cfg.Every {
@@ -323,7 +345,7 @@ func (f *follow) due(now time.Time) (text string, ask int, ok bool) {
 // f.cfg.JudgeEvery after it, when the window holds f.cfg.Least words, and
 // never while a round waits for its verdict.
 func (f *follow) roundDue(now time.Time) (Round, int, bool) {
-	if !f.listening() || !f.judging || f.inRound != 0 || !f.news || f.writing != 0 || f.checking != 0 || f.pending() {
+	if !f.listening() || !f.judging || f.inRound != 0 || !f.news || f.writing != 0 || f.checking != 0 || f.pending() || f.topicWriting != 0 || f.topicWaits() {
 		return Round{}, 0, false
 	}
 	if !f.judged.IsZero() && now.Sub(f.judged) < f.cfg.JudgeEvery {
@@ -455,7 +477,7 @@ func (f *follow) merge(links []Link, now time.Time) int {
 
 // panel is what the panel shows now.
 func (f *follow) panel(now time.Time) Panel {
-	lingering := !f.recording && (len(f.links) > 0 || len(f.cards) > 0) && !f.stopped.IsZero() && now.Sub(f.stopped) < f.cfg.Linger
+	lingering := !f.recording && (len(f.links) > 0 || len(f.cards) > 0 || len(f.tcards) > 0) && !f.stopped.IsZero() && now.Sub(f.stopped) < f.cfg.Linger
 	p := Panel{Visible: f.on && (f.recording || lingering), Display: f.display, Links: append([]Link(nil), f.links...)}
 	if !p.Visible {
 		p.Links = nil
@@ -466,14 +488,12 @@ func (f *follow) panel(now time.Time) Panel {
 		if c.early {
 			continue
 		}
-		a := Answer{Question: c.q.shown, Text: c.text, Sources: append([]AnswerLine(nil), c.sources...), Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
-		switch {
-		case c.write || c.n == f.writing:
-			a.Lines, a.Note = nil, "Reading what On the Record found…"
-		case !c.done:
-			a.Note = "Looking…"
-		}
-		p.Answers = append(p.Answers, a)
+		p.Answers = append(p.Answers, f.answerCard(c))
+	}
+	deck := f.deck(now)
+	f.leave(deck)
+	for _, s := range deck {
+		p.Cards = append(p.Cards, s.card(f))
 	}
 	if f.differs != nil && now.Sub(f.differs.at) < f.cfg.Hold {
 		p.Differs = f.differs.line
@@ -512,6 +532,20 @@ func (f *follow) panel(now time.Time) Panel {
 	}
 	p.Status = strings.Join(said, " ")
 	return p
+}
+
+// answerCard is what an answer card says now: its question, the answer
+// and its sources, or the lines that answer it, and a word on it, such as
+// that it is still being asked.
+func (f *follow) answerCard(c *card) Answer {
+	a := Answer{Question: c.q.shown, Text: c.text, Sources: append([]AnswerLine(nil), c.sources...), Lines: append([]AnswerLine(nil), c.lines...), Note: c.note}
+	switch {
+	case c.write || c.n == f.writing:
+		a.Lines, a.Note = nil, "Reading what On the Record found…"
+	case !c.done:
+		a.Note = "Looking…"
+	}
+	return a
 }
 
 // recent counts the words said in the last f.cfg.Window, the person's and
@@ -620,8 +654,13 @@ func (f *follow) shows(p Panel, now time.Time) string {
 			written++
 		}
 	}
-	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s, %s with %s, %d written; status: %s",
-		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), plural(len(p.Answers), "answer card"), plural(lines, "line"), written, strings.Join(kinds, ", "))
+	drawn := 0
+	for _, c := range p.Cards {
+		drawn += len(c.Lines)
+	}
+	return fmt.Sprintf("shown, %d words yours and %d others in the last minute, %s, %s, %s with %s, %d written; %s drawn with %s; status: %s",
+		person, others, plural(len(p.Links), "link"), plural(len(p.Calls), "call"), plural(len(p.Answers), "answer card"), plural(lines, "line"), written,
+		plural(len(p.Cards), "card"), plural(drawn, "line"), strings.Join(kinds, ", "))
 }
 
 // sentence ends what another part said with a full stop, if it has none.
@@ -665,6 +704,11 @@ type card struct {
 	sources []AnswerLine
 	// When each step began and ended, for the diagnostic log.
 	made, noticed, rewordAsked, rewordCame, fetched, writeAsked time.Time
+	// chips are its sources as the panel's card shows them, shownAt when
+	// it went on the panel, and gone that newer cards pushed it off.
+	chips   []Source
+	shownAt time.Time
+	gone    bool
 }
 
 // recognized takes a result of speech recognition, while listening, and
@@ -822,7 +866,7 @@ func (f *follow) order() []*card {
 // writes or checks, or a round is out. One it returns is under way:
 // reworded or abandonReword ends it.
 func (f *follow) rewordDue(now time.Time) (Prompt, int, bool) {
-	if !f.listening() || !f.writer || f.slow || f.rewording != 0 || f.writing != 0 || f.checking != 0 || f.inRound != 0 {
+	if !f.listening() || !f.writer || f.slow || f.rewording != 0 || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.topicWriting != 0 {
 		return Prompt{}, 0, false
 	}
 	for _, c := range f.order() {
@@ -976,7 +1020,7 @@ func (f *follow) fallback(c *card) {
 // round is out. One it returns is under way: answerWritten or abandonWrite ends
 // it.
 func (f *follow) writeDue(now time.Time) (Prompt, int, bool) {
-	if !f.listening() || !f.writer || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 {
+	if !f.listening() || !f.writer || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 || f.topicWriting != 0 {
 		return Prompt{}, 0, false
 	}
 	for i := len(f.cards) - 1; i >= 0; i-- {
@@ -1023,6 +1067,7 @@ func (f *follow) answerWritten(n int, text string, err error) (o outcome, why st
 		for i, k := range cited {
 			p := c.from[k-1]
 			c.sources = append(c.sources, AnswerLine{Text: fmt.Sprintf("[%d] %s", i+1, whereSaid(p)), URL: p.URL})
+			c.chips = append(c.chips, Source{Label: label(p), URL: p.URL})
 		}
 	default:
 		// The model found no direct answer, or wrote one that didn't check
@@ -1083,7 +1128,7 @@ func (f *follow) state(u utterance) {
 func (f *follow) remember(b Brief, now time.Time) {
 	for _, p := range b.Points {
 		fs := facts(p.Text)
-		if len(fs) == 0 || !openable(p.URL) {
+		if len(fs) == 0 || !openable(p.URL) || p.Notebook {
 			continue
 		}
 		f.records = slices.DeleteFunc(f.records, func(r record) bool { return r.p.URL == p.URL && r.p.Text == p.Text })
@@ -1108,7 +1153,7 @@ func (f *follow) remember(b Brief, now time.Time) {
 // only when a record shares a key word with what was said. A check it
 // returns is under way: checkedBy or abandonCheck ends it.
 func (f *follow) checkDue(now time.Time) (Prompt, int, int, int, bool) {
-	if !f.listening() || !f.writer || !f.newFact || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 {
+	if !f.listening() || !f.writer || !f.newFact || f.writing != 0 || f.checking != 0 || f.inRound != 0 || f.rewording != 0 || f.topicWriting != 0 || f.topicWaits() {
 		return Prompt{}, 0, 0, 0, false
 	}
 	if !f.checked.IsZero() && now.Sub(f.checked) < f.cfg.CheckEvery {
@@ -1194,6 +1239,9 @@ func (f *follow) checkedBy(n int, text string, err error, now time.Time) (result
 		return "rejected: " + why, true
 	case s == nil:
 		return "nothing differs", true
+	case !f.sameNames(s.text, r.p):
+		f.checkRejected++
+		return "rejected: the statement and the note are about different people or companies", true
 	}
 	for key, at := range f.differed {
 		if now.Sub(at) >= f.cfg.Quiet {
@@ -1239,6 +1287,65 @@ func (f *follow) abandonAnswer(now time.Time) (n int) {
 // meanwhile.
 func (f *follow) pending() bool {
 	return slices.ContainsFunc(f.cards, func(c *card) bool { return !c.done })
+}
+
+// sameNames says whether a statement and a line of the record are about
+// the same people or companies: when the statement names any the archive
+// knows, but its owners, the line, what it sits under or its meeting must
+// name one of them, or be a meeting the person named was in, by its title
+// and, when both have one, its date, since a meeting held every week keeps
+// its title. A statement that names none, or a follow that knows no
+// names, is taken as before.
+func (f *follow) sameNames(said string, p Point) bool {
+	if f.roster == nil {
+		return true
+	}
+	r := f.roster
+	var named []int
+	for _, k := range r.mentions(said, f.cfg) {
+		if !r.all[k].ours {
+			named = append(named, k)
+		}
+	}
+	if len(named) == 0 {
+		return true
+	}
+	on := r.mentions(p.Text+" · "+p.Under+" · "+p.Meeting, f.cfg)
+	for _, k := range named {
+		if slices.Contains(on, k) {
+			return true
+		}
+		for _, i := range r.all[k].meetings {
+			m := r.lib.Meetings[i]
+			if r.all[k].person && m.Title == p.Meeting && (m.Date == "" || p.Date == "" || firstOf(m.Date, 10) == firstOf(p.Date, 10)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// asksArchive says whether a question is one to ask the archive: one that
+// names a project, a person or a company it knows, but its owners, or
+// asks about the last time something happened. In a conversation most
+// questions are for the people in it. A follow that knows no names asks
+// them all, as before.
+func (f *follow) asksArchive(q question, text string) bool {
+	if f.roster == nil || !f.cfg.Topics || q.recall {
+		return true
+	}
+	for _, k := range f.roster.mentions(text, f.cfg) {
+		if !f.roster.all[k].ours {
+			return true
+		}
+	}
+	return false
+}
+
+// topicWaits says whether a card about a name waits for On the Record or
+// the writer: checks and the decision model's rounds wait for it.
+func (f *follow) topicWaits() bool {
+	return slices.ContainsFunc(f.tcards, func(c *tcard) bool { return c.fetch || c.write || c.n == f.fetching })
 }
 
 func (f *follow) card(n int) *card {

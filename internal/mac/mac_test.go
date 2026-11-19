@@ -131,16 +131,15 @@ func TestTheLiveMixAddsBothSoundsAndMeasuresEach(t *testing.T) {
 }
 
 // The panel shows a difference from the record first, and then each card:
-// its question, its word on it, and then its answer and sources, or its
-// lines. A word that introduces the lines, as "No direct answer; the
-// closest notes:" does, comes before them.
+// its title, its word on it, and then each line followed by its sources. A
+// word that introduces the lines comes before them.
 func TestACardsWordComesBeforeTheLinesItIntroduces(t *testing.T) {
-	rows := answerRows(AnswerLine{Text: "Differs from the record: said “a”; the record says “b”", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}, []Answer{
-		{Question: "How many sign ups so far?", Note: "No direct answer; the closest notes:",
-			Lines: []AnswerLine{{Text: "The waitlist reached 2,300 sign ups", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}}},
-		{Question: "How much is the round?", Text: "They hope to close a $750k pre-seed round [1].",
-			Sources: []AnswerLine{{Text: "[1] Partner sync · 2026-09-14 · 6:12", URL: "https://archive.example/m/a?t=372"}}},
-		{Question: "When do doors open?", Note: "Looking…"},
+	rows := cardRows(AnswerLine{Text: "Differs from the record: said “a”; the record says “b”", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}, []Card{
+		{Title: "Halcyon", Note: "From the board:", Lines: []CardLine{
+			{Text: "Priya to send the press kit", Sources: []Source{{Label: "Oct 21", URL: "https://archive.example/m/c?t=520"}}},
+			{Text: "They hope to close a $750k pre-seed round", Sources: []Source{{Label: "Sep 14", URL: "https://archive.example/m/a?t=372"}, {Label: "Oct 8", URL: "https://archive.example/m/b"}}},
+		}},
+		{Title: "When do doors open?", Lines: []CardLine{{Text: "On the 9th"}}},
 	})
 	var got []string
 	for _, r := range rows {
@@ -148,20 +147,24 @@ func TestACardsWordComesBeforeTheLinesItIntroduces(t *testing.T) {
 	}
 	want := []string{
 		"differs: Differs from the record: said “a”; the record says “b”",
-		"question: How many sign ups so far?",
-		"note: No direct answer; the closest notes:",
-		"line: The waitlist reached 2,300 sign ups",
-		"question: How much is the round?",
-		"answer: They hope to close a $750k pre-seed round [1].",
-		"source: [1] Partner sync · 2026-09-14 · 6:12",
-		"question: When do doors open?",
-		"note: Looking…",
+		"title: Halcyon",
+		"note: From the board:",
+		"line: Priya to send the press kit",
+		"source: Oct 21",
+		"line: They hope to close a $750k pre-seed round",
+		"source: Sep 14",
+		"source: Oct 8",
+		"title: When do doors open?",
+		"line: On the 9th",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("the panel's rows are\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if r := rows[3]; r.where != "Weekly · 2026-10-21 · 8:40" || r.link != "https://archive.example/m/c?t=520" {
-		t.Fatalf("the line's row is %+v", r)
+	if r := rows[0]; r.where != "Weekly · 2026-10-21 · 8:40" || r.link != "https://archive.example/m/c?t=520" {
+		t.Fatalf("the difference's row is %+v", r)
+	}
+	if r := rows[4]; r.link != "https://archive.example/m/c?t=520" {
+		t.Fatalf("the source's row is %+v", r)
 	}
 }
 
@@ -172,10 +175,9 @@ func TestACardsWordComesBeforeTheLinesItIntroduces(t *testing.T) {
 func TestThePanelLetsGoOfWhatItShowed(t *testing.T) {
 	long := strings.Repeat("a line of the notes, ", 40)
 	show := func() {
-		ShowPanel(false, "display", long, long, []string{long, long}, AnswerLine{Text: long, Where: long, URL: "https://archive.example/m/a"},
-			[]Answer{{Question: long, Note: long, Lines: []AnswerLine{{Text: long, Where: long, URL: "https://archive.example/m/b"}}},
-				{Question: long, Text: long, Sources: []AnswerLine{{Text: long, URL: "https://archive.example/m/c"}}}},
-			[]Link{{Kind: "Meeting", Title: long, Date: "2026-11-03", Why: long, URL: "https://archive.example/m/d"}})
+		ShowPanel(false, "display", long, []string{long, long}, AnswerLine{Text: long, Where: long, URL: "https://archive.example/m/a"},
+			[]Card{{Title: long, Note: long, Lines: []CardLine{{Text: long, Sources: []Source{{Label: "Nov 3", URL: "https://archive.example/m/b"}}}}},
+				{Title: long, Lines: []CardLine{{Text: long, Sources: []Source{{Label: long, URL: "https://archive.example/m/c"}}}, {Text: long}}}})
 	}
 	grew := make(chan int64)
 	go func() {
@@ -225,5 +227,31 @@ func TestTheMenuLetsGoOfWhatItShowed(t *testing.T) {
 	}()
 	if n := <-grew; n > 1<<20 {
 		t.Fatalf("after five thousand calls to the menu, malloc holds %d KB more", n>>10)
+	}
+}
+
+// The panel lays out a difference from the record and its cards, each
+// line's sources a chip a click opens, and grows with each card.
+func TestThePanelLaysOutItsCardsWithASourceChipEach(t *testing.T) {
+	differs := AnswerLine{Text: "Differs from the record: said “a”; the record says “b”", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}
+	card := Card{Title: "Halcyon", Lines: []CardLine{
+		{Text: "They hope to close a $750k pre-seed round", Sources: []Source{{Label: "Sep 14", URL: "https://archive.example/m/a?t=372"}, {Label: "Oct 8", URL: "https://archive.example/m/b"}}},
+		{Text: "Priya owes the press kit, with no date set", Sources: []Source{{Label: "Oct 21", URL: "https://archive.example/m/c?t=520"}}},
+	}}
+	done := make(chan struct{})
+	var one, two float64
+	var clickable int
+	go func() {
+		defer close(done)
+		one, _ = panelLayout(differs, []Card{card})
+		two, clickable = panelLayout(differs, []Card{card, card})
+	}()
+	<-done
+	if one < 120 || two <= one+40 {
+		t.Errorf("one card lays out %.0f points tall, two %.0f", one, two)
+	}
+	// The difference, and three chips on each card.
+	if clickable != 1+3+3 {
+		t.Errorf("%d parts a click opens", clickable)
 	}
 }

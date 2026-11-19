@@ -55,6 +55,10 @@ type door struct {
 	// answers, or else made-up.
 	gathered []map[string]any
 	brief    func(w http.ResponseWriter, id json.RawMessage)
+	// lists answer the archive's lists, by tool, as structured content,
+	// and listed is the arguments each was called with.
+	lists  map[string]string
+	listed []map[string]any
 }
 
 func (d *door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +119,12 @@ func (d *door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, m.ID, fmt.Sprintf(`{"content":[{"type":"text","text":%q},{"type":"text","text":%q}]}`, madeUpBrief, `{"topic":"x","meetings":["m-1","m-2"],"passages":4,"semantic":true}`))
+	case m.Method == "tools/call" && d.lists[m.Params.Name] != "":
+		d.mu.Lock()
+		d.listed = append(d.listed, args)
+		d.mu.Unlock()
+		list := d.lists[m.Params.Name]
+		reply(w, m.ID, fmt.Sprintf(`{"content":[{"type":"text","text":%q}],"structuredContent":%s}`, list, list))
 	default:
 		reply(w, m.ID, "", `{"code":-32601,"message":"not on this door"}`)
 	}
