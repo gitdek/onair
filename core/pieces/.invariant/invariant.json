@@ -1,0 +1,10 @@
+{
+  "name": "recording pieces",
+  "module": ".invariant/specs/RecordingPieces.tla",
+  "code": "pieces",
+  "language": "go",
+  "parameters": [
+    "MaxPieces",
+    "InterruptionLimit"
+  ]
+}

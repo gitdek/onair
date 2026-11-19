@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "state": [
+    {
+      "id": "offline",
+      "when": {
+        "eq": [
+          {
+            "var": "online"
+          },
+          "FALSE"
+        ]
+      },
+      "label": "On Air stopped; saved record and disk survive"
+    },
+    {
+      "id": "write",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Write\""
+        ]
+      },
+      "label": "Write the next piece under its hidden name"
+    },
+    {
+      "id": "name",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Name\""
+        ]
+      },
+      "label": "Name the flushed piece and save its closure"
+    },
+    {
+      "id": "discard-piece",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"DiscardPiece\""
+        ]
+      },
+      "label": "Discard the unfinished piece before reusing its number"
+    },
+    {
+      "id": "join",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Join\""
+        ]
+      },
+      "label": "Join every closed piece in order"
+    },
+    {
+      "id": "publish",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"PublishJoin\""
+        ]
+      },
+      "label": "Gap manifest saved; name the whole joined file"
+    },
+    {
+      "id": "join-failed",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"JoinFailed\""
+        ]
+      },
+      "label": "Join failed; keep the pieces and report their location"
+    },
+    {
+      "id": "interrupted-limit",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"DiscardJoinFailed\""
+        ]
+      },
+      "label": "Interruption limit reached; discard partial join and report failure"
+    },
+    {
+      "id": "retry-cleanup",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"DiscardJoinRetry\""
+        ]
+      },
+      "label": "Discard partial output before retrying the join"
+    },
+    {
+      "id": "handover",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Handover\""
+        ]
+      },
+      "label": "Hand over the joined file with the stable recording identity"
+    },
+    {
+      "id": "handover-failed",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"HandoverFailed\""
+        ]
+      },
+      "label": "Hand-over failed; keep every piece"
+    },
+    {
+      "id": "retained",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Retained\""
+        ]
+      },
+      "label": "Handed over; retain the pieces for three days"
+    },
+    {
+      "id": "remove",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Remove\""
+        ]
+      },
+      "label": "Retention elapsed; remove the pieces"
+    },
+    {
+      "id": "done",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Done\""
+        ]
+      },
+      "label": "Piece removal complete"
+    },
+    {
+      "id": "empty",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"Empty\""
+        ]
+      },
+      "label": "Nothing recorded"
+    },
+    {
+      "id": "join-ready",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"JoinReady\""
+        ]
+      },
+      "label": "Recording ready to join"
+    },
+    {
+      "id": "handover-ready",
+      "when": {
+        "eq": [
+          {
+            "var": "phase"
+          },
+          "\"HandoverReady\""
+        ]
+      },
+      "label": "Joined recording ready for hand-over"
+    },
+    {
+      "id": "capture-final",
+      "when": {
+        "all": [
+          {
+            "eq": [
+              {
+                "var": "phase"
+              },
+              "\"Capture\""
+            ]
+          },
+          {
+            "eq": [
+              {
+                "var": "capture"
+              },
+              "\"final\""
+            ]
+          }
+        ]
+      },
+      "label": "Capture final; finish the closed pieces"
+    },
+    {
+      "id": "capture-failed",
+      "when": {
+        "eq": [
+          {
+            "var": "capture"
+          },
+          "\"failed\""
+        ]
+      },
+      "label": "Write failed; capture cannot continue"
+    },
+    {
+      "id": "capture-paused",
+      "when": {
+        "eq": [
+          {
+            "var": "capture"
+          },
+          "\"paused\""
+        ]
+      },
+      "label": "Capture stopped; await carry-on or finalization"
+    },
+    {
+      "id": "all",
+      "when": true,
+      "label": "Capture active; accept the next piece"
+    }
+  ],
+  "step": [
+    {
+      "id": "Crash",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Crash"
+        ]
+      },
+      "label": "On Air dies"
+    },
+    {
+      "id": "Launch",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "Launch"
+        ]
+      },
+      "label": "Recover from the disk listing"
+    },
+    {
+      "id": "AskRetry",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "AskRetry"
+        ]
+      },
+      "label": "The person requests a retry"
+    },
+    {
+      "id": "ScheduleRetry",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "ScheduleRetry"
+        ]
+      },
+      "label": "Schedule the requested retry"
+    },
+    {
+      "id": "NamePiece",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "NamePiece"
+        ]
+      },
+      "label": "Give the flushed piece its name"
+    },
+    {
+      "id": "NameJoinedFile",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "NameJoinedFile"
+        ]
+      },
+      "label": "Give the prepared joined file its name"
+    },
+    {
+      "id": "ReportThreeDaysElapsed",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "ReportThreeDaysElapsed"
+        ]
+      },
+      "label": "The caller reports three days have elapsed"
+    },
+    {
+      "id": "ReportHandoverSuccess",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "ReportHandoverSuccess"
+        ]
+      },
+      "label": "Save successful hand-over"
+    },
+    {
+      "id": "CarryOn",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "CarryOn"
+        ]
+      },
+      "label": "Carry on the recording"
+    },
+    {
+      "id": "FinishCapture",
+      "when": {
+        "eq": [
+          {
+            "action": true
+          },
+          "FinishCapture"
+        ]
+      },
+      "label": "Capture ends for good"
+    },
+    {
+      "id": "all",
+      "when": true,
+      "label": "Advance bookkeeping or report a caller effect"
+    }
+  ]
+}

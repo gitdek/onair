@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "fingerprint": "sha256:9da355343e517216ac410db8f15c287651ed4de7f8eea1a3ddc97e0f8545c28c",
+  "limitation": {
+    "code": "too_large",
+    "actual": 24760,
+    "limit": 500,
+    "source": {
+      "module": "RecordingPieces",
+      "config": {
+        "Specification": "Spec",
+        "Constants": {
+          "Durations": "{2, 3}",
+          "InterruptionLimit": "2",
+          "MaxPieces": "2",
+          "RecordingId": "\"recording-1\"",
+          "SpoolPath": "\"spool/recording-1\""
+        },
+        "Invariants": [
+          "ClosedPiecesPreserved",
+          "WholePiecesAreDurable",
+          "NamingRequiresFlushReport",
+          "TypeOK",
+          "OnlyNamedPiecesAreWhole",
+          "SettledInventoryMatchesDisk",
+          "ClosedNumbersNeverReused",
+          "JoinWaitsForFinalCapture",
+          "OnlyOneOpenPiece",
+          "NoMoreFromFailedCapture",
+          "JoinUsesEveryClosedPieceInOrder",
+          "JoinRequestHasOnlyWholePieces",
+          "JoinPublicationNeedsSavedManifest",
+          "EveryOmissionHasItsDuration",
+          "OneJoinedFileOnly",
+          "HandoverRequiresSuccess",
+          "RemovalWaitsThreeDaysAfterHandover",
+          "FailedJoinKeepsRecording",
+          "FailedHandoverKeepsRecording",
+          "ErrorsIdentifySpool",
+          "InterruptionCountSurvivesRetries",
+          "InterruptedJoinStopsAtLimit",
+          "EmptyMeansNothingRecorded",
+          "NamedPieceRecoveryUsesDisk",
+          "NamedJoinRecoveryUsesExistingFile",
+          "InterruptedJoinRecovery",
+          "FailedJoinRetriesOnLaunch",
+          "HandoverRetriesOnLaunch",
+          "RetryRequestRemainsPending"
+        ],
+        "Properties": null
+      },
+      "tool": {
+        "Image": "eclipse-temurin@sha256:49e21e16e3c86eb7816a44a67549910ed090fbeb40c29c525d58bf5e02e91b0f",
+        "JarSHA256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+      },
+      "tlc_version": "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)"
+    }
+  },
+  "comparison_ref": {
+    "version": 1,
+    "file": "comparison.json",
+    "fingerprint": "sha256:7a278f2cbe7405089c55b6e2a5e7712bdd43a2d2e95a1f7506c7bb4a63e2a1ce"
+  }
+}
