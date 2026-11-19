@@ -24,6 +24,8 @@ package pieces
 // @ ensures acc(&b.Meta) && acc(&b.Pieces, 1/2) && acc(&b.ID, 1/2) && acc(&b.Spool, 1/2) && acc(&b.Limit, 1/2)
 // @ ensures forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> acc(&b.Pieces[i])
 // @ ensures len(b.Pieces) == old(len(b.Pieces)) && cap(b.Pieces) == old(cap(b.Pieces)) && (b.Pieces == nil) == old(b.Pieces == nil) && (forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> &b.Pieces[i] == old(&b.Pieces[i])) && b.ID == old(b.ID) && b.Spool == old(b.Spool) && b.Limit == old(b.Limit)
+// @ ensures forall i int :: { &named[i] } 0 <= i && i < len(named) ==> acc(&named[i], 1/2)
+// @ ensures forall i int :: { named[i] } 0 <= i && i < len(named) ==> named[i] == old(named[i])
 // @ ensures ok == old(true)
 // @ ensures !ok ==> b.Meta == old(b.Meta)
 // @ ensures ok ==> b.Meta.Phase == recoveryPhase(old(b.Meta.Phase), 1 <= old(b.Meta.Open) && old(b.Meta.Open) <= len(named) && named[old(b.Meta.Open)-1], joined, (((old(b.Meta.Phase) == "Join" || old(b.Meta.Phase) == "PublishJoin") && !joined) && old(b.Meta.Interruptions) < old(b.Limit) ? old(b.Meta.Interruptions)+1 : old(b.Meta.Interruptions)) >= old(b.Limit))
@@ -42,8 +44,6 @@ package pieces
 // @ ensures ok ==> b.Meta.RetryPending == false
 // @ ensures !ok ==> forall i int :: { b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> b.Pieces[i] == old(b.Pieces[i])
 // @ ensures ok ==> forall i int :: { b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> (b.Pieces[i].Known == named[i] && b.Pieces[i].Duration == old(b.Pieces[i].Duration) && b.Pieces[i].Omitted == (((old(b.Meta.Phase) == "Join" || old(b.Meta.Phase) == "PublishJoin") && !joined) ? false : old(b.Pieces[i].Omitted)) && b.Pieces[i].Gap == (((old(b.Meta.Phase) == "Join" || old(b.Meta.Phase) == "PublishJoin") && !joined) ? 0 : old(b.Pieces[i].Gap)))
-// @ ensures forall i int :: { &named[i] } 0 <= i && i < len(named) ==> acc(&named[i], 1/2)
-// @ ensures forall i int :: { named[i] } 0 <= i && i < len(named) ==> named[i] == old(named[i])
 func (b *Recording) Recover(named []bool, joined bool) (ok bool) {
 	lost := (b.Meta.Phase == "Join" || b.Meta.Phase == "PublishJoin") && !joined
 	openNamed := false
@@ -92,30 +92,26 @@ func (b *Recording) Recover(named []bool, joined bool) (ok bool) {
 	return true
 }
 
-// reconcileInventory owns only per-piece metadata. Keeping this loop separate
-// from recovery's scalar decisions makes both effects independently verifiable.
+// reconcileInventory takes the pieces named on disk as the known ones and
+// counts them, and forgets a lost join's omissions. It owns only per-piece
+// metadata, so recovery's scalar decisions are verified apart from its loop.
+// Like the helpers in recording.go, it takes the pieces whole and counts over
+// a ghost copy of the listing.
 // @ requires len(ps) <= MaxCapacity && len(named) == len(ps)
 // @ requires forall i int :: { &ps[i] } 0 <= i && i < len(ps) ==> acc(&ps[i])
 // @ requires forall i int :: { &named[i] } 0 <= i && i < len(named) ==> acc(&named[i], 1/2)
-// @ ensures forall i int :: { &ps[i] } 0 <= i && i < len(ps) ==> acc(&ps[i])
-// @ ensures forall i int :: { &named[i] } 0 <= i && i < len(named) ==> acc(&named[i], 1/2)
-// @ ensures seq(named) == old(seq(named))
-// @ ensures forall i int :: { named[i] } 0 <= i && i < len(named) ==> named[i] == old(named[i])
+// @ ensures forall i int :: { &named[i] } 0 <= i && i < len(named) ==> acc(&named[i], 1/2) && named[i] == old(named[i])
 // @ ensures 0 <= count && count <= len(ps) && count == namedPrefix(old(seq(named)), len(named))
-// @ ensures forall i int :: { ps[i] } 0 <= i && i < len(ps) ==> ps[i].Known == named[i] && ps[i].Duration == old(ps[i].Duration) && ps[i].Omitted == (lost ? false : old(ps[i].Omitted)) && ps[i].Gap == (lost ? 0 : old(ps[i].Gap))
+// @ ensures forall i int :: { &ps[i] } 0 <= i && i < len(ps) ==> acc(&ps[i]) && ps[i].Known == named[i] && ps[i].Duration == old(ps[i].Duration) && ps[i].Omitted == (lost ? false : old(ps[i].Omitted)) && ps[i].Gap == (lost ? 0 : old(ps[i].Gap))
 func reconcileInventory(ps []Piece, named []bool, lost bool) (count int) {
+	// @ ghost s := seq(named)
 	i := 0
-	// @ invariant 0 <= i && i <= len(ps) && len(ps) <= MaxCapacity && len(named) == len(ps)
-	// @ invariant forall j int :: { &ps[j] } 0 <= j && j < len(ps) ==> acc(&ps[j])
-	// @ invariant forall j int :: { &named[j] } 0 <= j && j < len(named) ==> acc(&named[j], 1/2)
-	// @ invariant seq(named) == old(seq(named))
-	// @ invariant forall j int :: { named[j] } 0 <= j && j < len(named) ==> named[j] == old(named[j])
-	// @ invariant 0 <= count && count <= i && count == namedPrefix(seq(named), i)
-	// @ invariant forall j int :: { ps[j] } 0 <= j && j < len(ps) ==> ps[j].Duration == old(ps[j].Duration)
-	// @ invariant forall j int :: { ps[j] } 0 <= j && j < i ==> ps[j].Known == named[j]
-	// @ invariant forall j int :: { ps[j] } 0 <= j && j < i && lost ==> !ps[j].Omitted && ps[j].Gap == 0
-	// @ invariant forall j int :: { ps[j] } 0 <= j && j < len(ps) && !lost ==> ps[j].Omitted == old(ps[j].Omitted) && ps[j].Gap == old(ps[j].Gap)
-	// @ decreases len(ps)-i
+	// @ invariant forall j int :: { &named[j] } 0 <= j && j < len(named) ==> acc(&named[j], 1/2) && named[j] == old(named[j])
+	// @ invariant 0 <= i && i <= len(ps) && len(ps) <= MaxCapacity && len(named) == len(ps) && len(s) == len(named)
+	// @ invariant forall j int :: { &named[j] } 0 <= j && j < len(named) ==> s[j] == named[j]
+	// @ invariant forall j int :: { &ps[j] } 0 <= j && j < len(ps) ==> acc(&ps[j]) && ps[j].Duration == old(ps[j].Duration) && (j < i ==> ps[j].Known == named[j] && ps[j].Omitted == (lost ? false : old(ps[j].Omitted)) && ps[j].Gap == (lost ? 0 : old(ps[j].Gap))) && (i <= j ==> ps[j] == old(ps[j]))
+	// @ invariant 0 <= count && count <= i && count == namedPrefix(s, i)
+	// @ decreases len(ps) - i
 	for i < len(ps) {
 		ps[i].Known = named[i]
 		if named[i] {

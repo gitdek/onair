@@ -369,6 +369,8 @@ func (b *Recording) RequestJoin() (ok bool) {
 // @ ensures acc(&b.Meta) && acc(&b.Pieces, 1/2) && acc(&b.ID, 1/2) && acc(&b.Spool, 1/2) && acc(&b.Limit, 1/2)
 // @ ensures forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> acc(&b.Pieces[i])
 // @ ensures len(b.Pieces) == old(len(b.Pieces)) && cap(b.Pieces) == old(cap(b.Pieces)) && (b.Pieces == nil) == old(b.Pieces == nil) && (forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> &b.Pieces[i] == old(&b.Pieces[i])) && b.ID == old(b.ID) && b.Spool == old(b.Spool) && b.Limit == old(b.Limit)
+// @ ensures forall i int :: { &missing[i] } 0 <= i && i < len(missing) ==> acc(&missing[i], 1/2)
+// @ ensures forall i int :: { missing[i] } 0 <= i && i < len(missing) ==> missing[i] == old(missing[i])
 // @ ensures ok == old(b.Meta.Phase == "Join" && outputReady && (forall i int :: 0 <= i && i < len(b.Pieces) ==> (missing[i] ==> b.Pieces[i].Known)) && (exists i int :: 0 <= i && i < len(b.Pieces) && b.Pieces[i].Known && !missing[i]))
 // @ ensures !ok ==> b.Meta == old(b.Meta)
 // @ ensures ok ==> b.Meta.Phase == "PublishJoin"
@@ -387,35 +389,24 @@ func (b *Recording) RequestJoin() (ok bool) {
 // @ ensures b.Meta.RetryPending == old(b.Meta.RetryPending)
 // @ ensures !ok ==> forall i int :: { b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> b.Pieces[i] == old(b.Pieces[i])
 // @ ensures ok ==> forall i int :: { b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> (b.Pieces[i].Known == old(b.Pieces[i].Known) && b.Pieces[i].Duration == old(b.Pieces[i].Duration) && b.Pieces[i].Omitted == missing[i] && b.Pieces[i].Gap == (missing[i] ? old(b.Pieces[i].Duration) : 0))
-// @ ensures forall i int :: { &missing[i] } 0 <= i && i < len(missing) ==> acc(&missing[i], 1/2)
-// @ ensures forall i int :: { missing[i] } 0 <= i && i < len(missing) ==> missing[i] == old(missing[i])
 func (b *Recording) ReportJoinPrepared(missing []bool, outputReady bool) (ok bool) {
 	if b.Meta.Phase != "Join" || !outputReady {
 		return false
 	}
-	if !validManifest(b.Pieces, missing) {
+	// The join may leave out only known pieces, and must keep one. Each scan
+	// returns the piece that settles its half, or -1, and the assertion names
+	// that witness.
+	k := omittedUnknown(b.Pieces, missing)
+	if k >= 0 {
+		// @ assert old(missing[k]) && !old(b.Pieces[k].Known)
 		return false
 	}
-	i := 0
-	// @ invariant old(b.Meta.Phase == "Join" && outputReady && (forall j int :: 0 <= j && j < len(b.Pieces) ==> (missing[j] ==> b.Pieces[j].Known)) && (exists j int :: 0 <= j && j < len(b.Pieces) && b.Pieces[j].Known && !missing[j]))
-	// @ invariant 0 <= i && i <= len(b.Pieces) && len(b.Pieces) <= MaxCapacity && len(missing) == len(b.Pieces)
-	// @ invariant acc(&b.Meta) && acc(&b.Pieces, 1/2) && acc(&b.ID, 1/2) && acc(&b.Spool, 1/2) && acc(&b.Limit, 1/2)
-	// @ invariant forall j int :: { &b.Pieces[j] } 0 <= j && j < len(b.Pieces) ==> acc(&b.Pieces[j])
-	// @ invariant forall i int :: { &missing[i] } 0 <= i && i < len(missing) ==> acc(&missing[i], 1/2)
-	// @ invariant len(b.Pieces) == old(len(b.Pieces)) && cap(b.Pieces) == old(cap(b.Pieces)) && (b.Pieces == nil) == old(b.Pieces == nil) && (forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> &b.Pieces[i] == old(&b.Pieces[i])) && b.ID == old(b.ID) && b.Spool == old(b.Spool) && b.Limit == old(b.Limit)
-	// @ invariant b.Meta == old(b.Meta)
-	// @ invariant forall j int :: { missing[j] } 0 <= j && j < len(missing) ==> missing[j] == old(missing[j])
-	// @ invariant forall j int :: { b.Pieces[j] } 0 <= j && j < len(b.Pieces) ==> b.Pieces[j].Known == old(b.Pieces[j].Known) && b.Pieces[j].Duration == old(b.Pieces[j].Duration)
-	// @ invariant forall j int :: { b.Pieces[j] } 0 <= j && j < i ==> b.Pieces[j].Omitted == missing[j] && b.Pieces[j].Gap == (missing[j] ? b.Pieces[j].Duration : 0)
-	// @ decreases len(b.Pieces)-i
-	for i < len(b.Pieces) {
-		b.Pieces[i].Omitted = missing[i]
-		b.Pieces[i].Gap = 0
-		if missing[i] {
-			b.Pieces[i].Gap = b.Pieces[i].Duration
-		}
-		i++
+	k = includedKnown(b.Pieces, missing)
+	if k < 0 {
+		return false
 	}
+	// @ assert old(b.Pieces[k].Known) && !old(missing[k])
+	fillManifest(b.Pieces, missing)
 	b.Meta.Prepared = true
 	b.Meta.Phase = "PublishJoin"
 	return true
@@ -800,19 +791,7 @@ func (b *Recording) ReportRemovalComplete(allAbsent bool) (ok bool) {
 	if b.Meta.Phase != "Remove" || !allAbsent {
 		return false
 	}
-	i := 0
-	// @ invariant 0 <= i && i <= len(b.Pieces) && len(b.Pieces) <= MaxCapacity
-	// @ invariant acc(&b.Meta) && acc(&b.Pieces, 1/2) && acc(&b.ID, 1/2) && acc(&b.Spool, 1/2) && acc(&b.Limit, 1/2)
-	// @ invariant forall j int :: { &b.Pieces[j] } 0 <= j && j < len(b.Pieces) ==> acc(&b.Pieces[j])
-	// @ invariant len(b.Pieces) == old(len(b.Pieces)) && cap(b.Pieces) == old(cap(b.Pieces)) && (b.Pieces == nil) == old(b.Pieces == nil) && (forall i int :: { &b.Pieces[i] } 0 <= i && i < len(b.Pieces) ==> &b.Pieces[i] == old(&b.Pieces[i])) && b.ID == old(b.ID) && b.Spool == old(b.Spool) && b.Limit == old(b.Limit)
-	// @ invariant b.Meta == old(b.Meta)
-	// @ invariant forall j int :: { b.Pieces[j] } 0 <= j && j < len(b.Pieces) ==> b.Pieces[j].Duration == old(b.Pieces[j].Duration) && b.Pieces[j].Omitted == old(b.Pieces[j].Omitted) && b.Pieces[j].Gap == old(b.Pieces[j].Gap)
-	// @ invariant forall j int :: { b.Pieces[j] } 0 <= j && j < i ==> !b.Pieces[j].Known
-	// @ decreases len(b.Pieces)-i
-	for i < len(b.Pieces) {
-		b.Pieces[i].Known = false
-		i++
-	}
+	forgetPieces(b.Pieces)
 	b.Meta.Phase = "Done"
 	return true
 }
