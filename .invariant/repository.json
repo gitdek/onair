@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "projects_directory": "core",
   "parts": [
     {
       "name": "go:.",
@@ -56,6 +57,40 @@
             "-count=1"
           ]
         }
+      },
+      "macos": {
+        "build": {
+          "argv": [
+            "go",
+            "build",
+            "./..."
+          ]
+        },
+        "vet": {
+          "argv": [
+            "go",
+            "vet",
+            "./..."
+          ]
+        },
+        "test": {
+          "argv": [
+            "go",
+            "test",
+            "./..."
+          ]
+        },
+        "checks": [
+          {
+            "name": "selftest",
+            "argv": [
+              "go",
+              "run",
+              "./cmd/onair",
+              "selftest"
+            ]
+          }
+        ]
       }
     }
   ],
