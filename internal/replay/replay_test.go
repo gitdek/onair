@@ -159,6 +159,33 @@ func TestAnAnswerIsAskedOnceAndThenTakesAsLongByTheClock(t *testing.T) {
 	}
 }
 
+// A model still loading when it is first asked loads with the clock held,
+// so what the live side allows a question, by its deadline, starts once
+// the model is ready: the answer that comes in that time is the one kept,
+// not the deadline that passed while the model loaded.
+func TestAnAnswerAskedWhileTheModelLoadsIsKeptAsAnAnswer(t *testing.T) {
+	store := &Store{Dir: t.TempDir()}
+	c := NewClock(time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC), 20)
+	loading := func() { time.Sleep(100 * time.Millisecond) }
+	answer := func(ctx context.Context) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return "made up", nil
+	}
+	for i, ready := range []func(){loading, nil} {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		got, err := ask(ctx, c, store, "q", errors.New("late"), ready, answer)
+		cancel()
+		if err != nil || got != "made up" {
+			t.Fatalf("asked %d times: %q, %v", i+1, got, err)
+		}
+	}
+	if store.Asked.Load() != 1 || store.Kept.Load() != 1 {
+		t.Errorf("asked %d, kept %d", store.Asked.Load(), store.Kept.Load())
+	}
+}
+
 // madeUpArchive answers every question with a made-up brief.
 type madeUpArchive struct{}
 

@@ -77,7 +77,10 @@ func (s *Store) put(key string, k kept) error {
 // that long since it was asked, as if it had been asked then. What the
 // live side allows the question, by ctx's deadline, it allows by the
 // clock: an answer that took longer fails with late when the clock gets
-// there. The live side giving up on it, by cancelling ctx, ends it at once.
+// there. Asked real, the question is allowed as long from when ready, which
+// loads a model the first time, returns, since the clock stood still while
+// it loaded. The live side giving up on it, by cancelling ctx, ends it at
+// once.
 func ask[T any](ctx context.Context, clock *Clock, store *Store, key string, late error, ready func(), real func(context.Context) (T, error)) (T, error) {
 	var zero T
 	asked := clock.Now()
@@ -93,9 +96,18 @@ func ask[T any](ctx context.Context, clock *Clock, store *Store, key string, lat
 		if ready != nil {
 			ready()
 		}
+		// Its own deadline, from now, and ctx's giving up.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), allowed)
+		stopping := context.AfterFunc(ctx, func() {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				cancel()
+			}
+		})
 		began := time.Now()
-		v, err := real(ctx)
+		v, err := real(rctx)
 		took := time.Since(began)
+		stopping()
+		cancel()
 		release()
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return zero, ctx.Err()
