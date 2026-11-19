@@ -2,7 +2,7 @@
 
 This page describes On Air as it is. [`docs/PRD.md`](docs/PRD.md) describes what it is meant to become.
 
-Milestone one is under way. Two parts exist: a menu-bar recorder that keeps each recording in pieces on disk, and the proved core of the hand-over, through which the recorder hands each finished recording to the folder picked from its menu. Beside them is a first, experimental piece of milestone three, [Live Context](#live-context-a-first-experiment), tried by hand on the owner's Mac, in a real meeting among other tries. The recorder was checked by hand on the owner's Mac on 14 November 2026, and [what was checked and what wasn't](#how-its-checked) is below. None of the milestone's own hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
+Milestone one is under way. Two parts exist: a menu-bar recorder that keeps each recording in pieces on disk, and the proved core of the hand-over, through which the recorder hands each finished recording to the folder picked from its menu. The proved cores of a recording's life and of its pieces are merged too, and nothing calls them yet. Beside them is a first, experimental piece of milestone three, [Live Context](#live-context-a-first-experiment), tried by hand on the owner's Mac, in a real meeting among other tries. The recorder was checked by hand on the owner's Mac on 14 November 2026, and [what was checked and what wasn't](#how-its-checked) is below. None of the milestone's own hand checks in [`docs/PRD.md`](docs/PRD.md#trying-milestone-one-by-hand) has been done in full.
 
 ## The recorder
 
@@ -136,6 +136,16 @@ The gate verifies it again on every pull request. The app reaches it as the owne
 - Go code proved with Gobra against contracts that restate the model, 29 of 29 functions with overflow checks, and checked against the model step by step. The check one size larger isn't claimed: TLC doesn't finish it within its three minutes.
 
 Nothing in the app calls it yet. Today's recorder in `internal/recorder` still decides these things in plain Go, and wiring the core in is part of what remains of milestone one.
+
+## The pieces core
+
+[`core/pieces`](core/pieces) keeps a recording's pieces: every closed piece keeps its bytes until the joined recording has been handed over and three days have passed; a piece counts as whole only once its bytes are flushed and it has its final name; numbers are never reused; a join uses every closed piece in order, leaves out one that can't be read and records how long the gap is, and saves that before the joined file gets its name; a join cut short by a crash is tried again at launch, up to a limit on interruptions that a retry doesn't reset; a hand-over cut short by a crash is asked for again at launch with the same recording's identity, and the hand-over core takes it only once, as the owner chose on the issue; and every error names where the recording's pieces are. It was built by the factory from [#9](https://github.com/gitdek/onair/issues/9) and finished by hand in [#24](https://github.com/gitdek/onair/pull/24), where Gobra didn't finish within its 20 minutes: its helpers now state each piece's facts where they hold its permission and count over one copy of the pieces, two contracts had a clause moved ahead of the one it needed, and two ghost counts were rewritten with the same values. No contract's meaning changed.
+
+- 68 statements, ratified on the issue and pinned by hash in [`ratified.lock`](core/pieces/.invariant/ratified.lock).
+- A TLA+ model that TLC explores exhaustively: 24,760 states, every witness reached, every planted bug caught, all five liveness properties holding under their fairness, and the check one size larger passes too.
+- Go code proved with Gobra against contracts that restate the model, 31 of 31 functions with overflow checks, and checked against the model step by step.
+
+Nothing in the app calls it yet. Today's `internal/spool` and `internal/recorder` still keep the pieces in plain Go, and wiring the core in is part of what remains of milestone one.
 
 ## The repository
 
