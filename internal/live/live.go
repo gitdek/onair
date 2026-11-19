@@ -46,22 +46,27 @@ type Found struct {
 	StrongMeetings, StrongItems []string
 }
 
-// Meeting is an earlier meeting the archive found.
+// Meeting is an earlier meeting the archive found, or one its list holds.
 type Meeting struct {
 	ID, Title, Date, URL string
 	// Why holds the archive's reasons, such as "close in meaning (0.61)"
 	// or "shares launch, pricing".
 	Why      []string
 	Passages []Passage
+	// People are who was there, and Summary is the archive's line on it,
+	// as its list of meetings gives them.
+	People  []string
+	Summary string
 }
 
 // Passage is a moment in a meeting: what was said, when, and its link.
 type Passage struct{ Text, At, URL string }
 
-// Note is a notebook entry the archive found.
+// Note is a notebook entry the archive found, or one its list holds.
 type Note struct {
 	ID, Title, Updated, URL string
 	Why                     []string
+	Tags                    []string
 }
 
 // Item is an action item on the archive's board.
@@ -69,6 +74,18 @@ type Item struct {
 	ID, Text, Status, Owner, URL string
 	// Meeting and MeetingDate name the meeting it came from, if any.
 	Meeting, MeetingDate string
+	// Ours says it is on the lane of the board that is the archive's
+	// owners' own, rather than everyone else's.
+	Ours bool
+}
+
+// Library is what the archive holds, as its lists give it: its meetings
+// and its notebook's entries, newest first, and the open items on its
+// board.
+type Library struct {
+	Meetings []Meeting
+	Items    []Item
+	Notes    []Note
 }
 
 // Brief is what On the Record answered about a question: the lines of its

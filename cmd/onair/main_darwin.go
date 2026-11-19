@@ -39,8 +39,15 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "replay" {
+		if err := replayCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "replay failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 {
-		fmt.Fprintln(os.Stderr, "usage: onair [selftest [-keep] [mix | TRACKS]]")
+		fmt.Fprintln(os.Stderr, "usage: onair [selftest [-keep] [mix | TRACKS] | replay [-as NAME] [-speed N] [-lose SHARE] [-models=false] TRANSCRIPT.json]")
 		os.Exit(2)
 	}
 	home, err := os.UserHomeDir()
