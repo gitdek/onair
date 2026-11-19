@@ -142,19 +142,36 @@ func TestAWrittenAnswerShowsOnlyWhenItChecksOut(t *testing.T) {
 	if fmt.Sprint(a) != fmt.Sprint(want) {
 		t.Fatalf("the card shows %+v", a)
 	}
-	for text, note := range map[string]string{
-		"Not in the archive.":                                                        "No direct answer; the closest notes:",
-		"They hope to close a $750k pre-seed round [12].":                            "The local model's answer didn't check out, so it isn't shown.",
-		"They hope to close a $750k pre-seed round.":                                 "The local model's answer didn't check out, so it isn't shown.",
-		"They hope to close a $750k pre-seed round [1]. Not in the archive, though.": "The local model's answer didn't check out, so it isn't shown.",
+	// A model that finds no direct answer, or writes one that doesn't check
+	// out, leaves the card the closest notes, under a word that says so:
+	// it can be too strict when the notes use other words, and an answer
+	// it gets wrong says nothing about the notes.
+	for _, text := range []string{
+		"Not in the archive.",
+		"They hope to close a $750k pre-seed round [12].",
+		"They hope to close a $750k pre-seed round.",
+		"They hope to close a $750k pre-seed round [1]. Not in the archive, though.",
+		fmt.Sprintf("They hope to close a $2 million seed round [%d].", k),
+		"[1]",
 	} {
 		f, n, _ := writingCard(t, "how much were they looking to collect for Halcyon")
 		f.answerWritten(n, text, nil)
-		// A model that finds no direct answer shows the closest notes, since
-		// it can be too strict when they use other words; one whose answer
-		// doesn't check out shows nothing.
-		closest := text == "Not in the archive."
-		if a := f.panel(at(2)).Answers[0]; a.Note != note || a.Text != "" || (len(a.Lines) > 0) != closest || len(a.Sources) != 0 {
+		a := f.panel(at(2)).Answers[0]
+		if a.Note != "No direct answer; the closest notes:" || a.Text != "" || len(a.Sources) != 0 || len(a.Lines) == 0 || a.Lines[0].Text != "Halcyon hopes to close a $750k pre-seed round" {
+			t.Fatalf("for %q the card shows %+v", text, a)
+		}
+		if f.lines != len(a.Lines) {
+			t.Fatalf("for %q, %d lines are counted as shown, and %d show", text, f.lines, len(a.Lines))
+		}
+	}
+	// With no line close to the question, the card says what came of it.
+	for text, note := range map[string]string{
+		"Not in the archive.":                    "Not in the archive.",
+		"The lawyers want a $9,000 deposit [1].": "The local model's answer didn't check out, so it isn't shown.",
+	} {
+		f, n, _ := writingCard(t, "what did the lawyers say about the office lease")
+		f.answerWritten(n, text, nil)
+		if a := f.panel(at(2)).Answers[0]; a.Note != note || a.Text != "" || len(a.Lines) != 0 || len(a.Sources) != 0 {
 			t.Fatalf("for %q the card shows %+v", text, a)
 		}
 	}
@@ -243,6 +260,8 @@ func TestAWrittenAnswersFiguresAreItsSources(t *testing.T) {
 	from := []Point{
 		{Text: "The team settled on $12 a seat per month for the starter plan", Meeting: "Pricing review", Date: "2026-11-03", At: "12:31"},
 		{Text: "The waitlist reached 2,300 sign ups, up from 1,400 at the start of the month", Meeting: "Halcyon weekly", Date: "2026-10-21", At: "8:40"},
+		{Text: "Kestrel closed a $2 million seed round", Meeting: "Kestrel investors", Date: "2026-10-02", At: "3:10"},
+		{Text: "The grant pays 2,000,000 over three years", Meeting: "Kestrel grants", Date: "2026-10-05", At: "1:00"},
 	}
 	for _, tc := range []struct {
 		text string
@@ -256,6 +275,14 @@ func TestAWrittenAnswersFiguresAreItsSources(t *testing.T) {
 		{"The starter plan is $15 a seat a month [1].", rejected},
 		{"The waitlist grew by 900 sign ups [2].", rejected},
 		{"The starter plan is $12 a seat [1]. The waitlist is at 2,400 [2].", rejected},
+		// The same sum, however it is written.
+		{"Kestrel closed a $2M seed round [3].", answered},
+		{"Kestrel closed a 2 million dollar seed round [3].", answered},
+		{"The grant pays $2M over three years [4].", answered},
+		{"The grant pays 2 million over three years [4].", answered},
+		{"The grant pays $2,000,000 [4], and Kestrel raised $2 million [3].", answered},
+		{"The grant pays $2.5M over three years [4].", rejected},
+		{"Kestrel closed a $20 million seed round [3].", rejected},
 	} {
 		if _, _, o, why := readAnswer(tc.text, from); o != tc.o {
 			t.Errorf("%q is read as %d (%s)", tc.text, o, why)
