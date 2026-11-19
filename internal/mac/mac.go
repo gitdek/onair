@@ -499,32 +499,46 @@ func ShowPanel(visible bool, display, headline, status string, calls []string, d
 	for i, l := range links {
 		items[i] = C.onair_link{kind: str(l.Kind), title: str(l.Title), date: str(l.Date), why: str(l.Why), link: str(l.URL)}
 	}
-	// A difference from the record goes first, as a row of its own. Each
-	// card goes as rows: its question, its answer and sources, or its
-	// lines, and its word.
 	var rows []C.onair_answer
-	if differs.Text != "" {
-		rows = append(rows, C.onair_answer{kind: str("differs"), text: str(differs.Text), where: str(differs.Where), link: str(differs.URL)})
-	}
-	for _, a := range answers {
-		rows = append(rows, C.onair_answer{kind: str("question"), text: str(a.Question), where: str(""), link: str("")})
-		if a.Text != "" {
-			rows = append(rows, C.onair_answer{kind: str("answer"), text: str(a.Text), where: str(""), link: str("")})
-		}
-		for _, l := range a.Sources {
-			rows = append(rows, C.onair_answer{kind: str("source"), text: str(l.Text), where: str(""), link: str(l.URL)})
-		}
-		for _, l := range a.Lines {
-			rows = append(rows, C.onair_answer{kind: str("line"), text: str(l.Text), where: str(l.Where), link: str(l.URL)})
-		}
-		if a.Note != "" {
-			rows = append(rows, C.onair_answer{kind: str("note"), text: str(a.Note), where: str(""), link: str("")})
-		}
+	for _, r := range answerRows(differs, answers) {
+		rows = append(rows, C.onair_answer{kind: str(r.kind), text: str(r.text), where: str(r.where), link: str(r.link)})
 	}
 	answerList := (*C.onair_answer)(C.malloc(C.size_t(max(len(rows), 1)) * C.size_t(unsafe.Sizeof(C.onair_answer{}))))
 	defer C.free(unsafe.Pointer(answerList))
 	copy(unsafe.Slice(answerList, max(len(rows), 1)), rows)
 	C.onair_live_show(flag(visible), str(display), str(headline), str(status), str(strings.Join(calls, "\n")), answerList, C.int(len(rows)), list, C.int(n))
+}
+
+// answerRow is a row of what the panel shows above its links: a
+// difference from the record, or a card's question, answer, source, line
+// or word on it.
+type answerRow struct{ kind, text, where, link string }
+
+// answerRows is what the panel shows of a difference from the record and
+// of answer cards, a row each, in order. A difference from the record goes
+// first, as a row of its own. Each card goes as rows: its question, its
+// answer and sources, or its lines, and its word.
+func answerRows(differs AnswerLine, answers []Answer) []answerRow {
+	var rows []answerRow
+	if differs.Text != "" {
+		rows = append(rows, answerRow{"differs", differs.Text, differs.Where, differs.URL})
+	}
+	for _, a := range answers {
+		rows = append(rows, answerRow{kind: "question", text: a.Question})
+		if a.Text != "" {
+			rows = append(rows, answerRow{kind: "answer", text: a.Text})
+		}
+		for _, l := range a.Sources {
+			rows = append(rows, answerRow{kind: "source", text: l.Text, link: l.URL})
+		}
+		for _, l := range a.Lines {
+			rows = append(rows, answerRow{"line", l.Text, l.Where, l.URL})
+		}
+		if a.Note != "" {
+			rows = append(rows, answerRow{kind: "note", text: a.Note})
+		}
+	}
+	return rows
 }
 
 // SelectArea lets a person drag out an area of a display: Area follows,

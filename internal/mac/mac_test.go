@@ -4,6 +4,7 @@ package mac
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -106,5 +107,40 @@ func TestTheLiveMixAddsBothSoundsAndMeasuresEach(t *testing.T) {
 	_, _, late, early = speechMix(rate, []mixBuffer{{0, 0, wave(call, 0, step)}, {1, 0, wave(mic, 0, step)}, {0, 0, make([]float32, 320)}, {1, step + 4*rate + 10, make([]float32, 100)}}, -1)
 	if late != 320 || early != 100 {
 		t.Fatalf("%d frames late and %d early, want 320 and 100", late, early)
+	}
+}
+
+// The panel shows a difference from the record first, and then each card:
+// its question, its word on it, and then its answer and sources, or its
+// lines. A word that introduces the lines, as "No direct answer; the
+// closest notes:" does, comes before them.
+func TestACardsWordComesBeforeTheLinesItIntroduces(t *testing.T) {
+	rows := answerRows(AnswerLine{Text: "Differs from the record: said “a”; the record says “b”", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}, []Answer{
+		{Question: "How many sign ups so far?", Note: "No direct answer; the closest notes:",
+			Lines: []AnswerLine{{Text: "The waitlist reached 2,300 sign ups", Where: "Weekly · 2026-10-21 · 8:40", URL: "https://archive.example/m/c?t=520"}}},
+		{Question: "How much is the round?", Text: "They hope to close a $750k pre-seed round [1].",
+			Sources: []AnswerLine{{Text: "[1] Partner sync · 2026-09-14 · 6:12", URL: "https://archive.example/m/a?t=372"}}},
+		{Question: "When do doors open?", Note: "Looking…"},
+	})
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.kind+": "+r.text)
+	}
+	want := []string{
+		"differs: Differs from the record: said “a”; the record says “b”",
+		"question: How many sign ups so far?",
+		"note: No direct answer; the closest notes:",
+		"line: The waitlist reached 2,300 sign ups",
+		"question: How much is the round?",
+		"answer: They hope to close a $750k pre-seed round [1].",
+		"source: [1] Partner sync · 2026-09-14 · 6:12",
+		"question: When do doors open?",
+		"note: Looking…",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("the panel's rows are\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if r := rows[3]; r.where != "Weekly · 2026-10-21 · 8:40" || r.link != "https://archive.example/m/c?t=520" {
+		t.Fatalf("the line's row is %+v", r)
 	}
 }
