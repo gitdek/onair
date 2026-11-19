@@ -193,32 +193,42 @@ static atomic_long showsAsked, choicesAsked;
 static long showsDone, choicesDone; // the newest applied, on the main thread
 
 void onair_show(int recording, const char *last, const char *note) {
-    long asked = atomic_fetch_add(&showsAsked, 1) + 1;
-    NSString *l = [NSString stringWithUTF8String:last ?: ""], *n = [NSString stringWithUTF8String:note ?: ""];
-    onMain(^{
-        if (asked <= showsDone) return;
-        showsDone = asked;
-        [app show:recording != 0 last:l note:n];
-    });
+    // Go calls this from its own threads, which have no autorelease pool,
+    // and what is autoreleased there stays until the thread ends, which Go's
+    // threads don't.
+    @autoreleasepool {
+        long asked = atomic_fetch_add(&showsAsked, 1) + 1;
+        NSString *l = [NSString stringWithUTF8String:last ?: ""], *n = [NSString stringWithUTF8String:note ?: ""];
+        onMain(^{
+            if (asked <= showsDone) return;
+            showsDone = asked;
+            [app show:recording != 0 last:l note:n];
+        });
+    }
 }
 
 void onair_choices(int open, const onair_choice *displays, int count, const char *area, const char *window, const char *folder, int live, const char *judge) {
-    NSMutableArray<NSDictionary *> *list = [NSMutableArray array];
-    for (int i = 0; i < count; i++) {
-        [list addObject:@{
-            @"id" : [NSString stringWithUTF8String:displays[i].id ?: ""],
-            @"title" : [NSString stringWithUTF8String:displays[i].title ?: ""],
-            @"picked" : @(displays[i].picked != 0),
-        }];
+    // Go calls this from its own threads, which have no autorelease pool,
+    // and what is autoreleased there stays until the thread ends, which Go's
+    // threads don't.
+    @autoreleasepool {
+        NSMutableArray<NSDictionary *> *list = [NSMutableArray array];
+        for (int i = 0; i < count; i++) {
+            [list addObject:@{
+                @"id" : [NSString stringWithUTF8String:displays[i].id ?: ""],
+                @"title" : [NSString stringWithUTF8String:displays[i].title ?: ""],
+                @"picked" : @(displays[i].picked != 0),
+            }];
+        }
+        NSString *a = [NSString stringWithUTF8String:area ?: ""], *w = [NSString stringWithUTF8String:window ?: ""];
+        NSString *f = [NSString stringWithUTF8String:folder ?: ""], *j = [NSString stringWithUTF8String:judge ?: ""] ?: @"";
+        long asked = atomic_fetch_add(&choicesAsked, 1) + 1;
+        onMain(^{
+            if (asked <= choicesDone) return;
+            choicesDone = asked;
+            [app choices:open != 0 displays:list area:a window:w folder:f live:live != 0 judge:j];
+        });
     }
-    NSString *a = [NSString stringWithUTF8String:area ?: ""], *w = [NSString stringWithUTF8String:window ?: ""];
-    NSString *f = [NSString stringWithUTF8String:folder ?: ""], *j = [NSString stringWithUTF8String:judge ?: ""] ?: @"";
-    long asked = atomic_fetch_add(&choicesAsked, 1) + 1;
-    onMain(^{
-        if (asked <= choicesDone) return;
-        choicesDone = asked;
-        [app choices:open != 0 displays:list area:a window:w folder:f live:live != 0 judge:j];
-    });
 }
 
 void onair_reveal(const char *path) {

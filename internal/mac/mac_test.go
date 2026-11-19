@@ -196,3 +196,34 @@ func TestThePanelLetsGoOfWhatItShowed(t *testing.T) {
 		t.Fatalf("after five thousand changes of the panel, malloc holds %d KB more", n>>10)
 	}
 }
+
+// The recorder tells the menu what to say from threads of its own, which
+// have no autorelease pool, at each change and each piece of a recording.
+// What each call is made of must be let go once the menu has it, so five
+// thousand calls leave malloc holding no more than before.
+func TestTheMenuLetsGoOfWhatItShowed(t *testing.T) {
+	long := strings.Repeat("a note about the recording, ", 30)
+	displays := []Choice{{ID: "display one", Title: long, Picked: true}, {ID: "display two", Title: long}}
+	tell := func() {
+		Show(true, long, long)
+		Choices(true, displays, long, long, long, true, "local")
+	}
+	grew := make(chan int64)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		tell()
+		waitMain()
+		before := mallocInUse()
+		for range 5000 {
+			tell()
+		}
+		waitMain()
+		// What the main queue let go of may take a moment to be freed.
+		time.Sleep(100 * time.Millisecond)
+		grew <- mallocInUse() - before
+	}()
+	if n := <-grew; n > 1<<20 {
+		t.Fatalf("after five thousand calls to the menu, malloc holds %d KB more", n>>10)
+	}
+}
