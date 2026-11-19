@@ -359,11 +359,13 @@ func start(argv, env []string) (*helperProcess, error) {
 		for {
 			line, err := readLine(reader)
 			if err != nil {
+				// Wait first: it finishes copying the helper's standard
+				// error, so why has the last line it wrote (#37).
+				cmd.Wait()
 				if !readyDone {
 					p.failed = fmt.Errorf("the local model stopped while loading%s", p.why())
 					close(p.ready)
 				}
-				cmd.Wait()
 				return
 			}
 			if !readyDone {
